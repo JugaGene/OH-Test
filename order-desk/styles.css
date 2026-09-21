@@ -281,7 +281,19 @@ tr.clickable:hover { background: #f6f9fc; }
   padding: 18px;
 }
 .modal h3 { margin: 0 0 12px; font-weight: 500; }
-.search { width: 100%; padding: 8px 10px; border: 1px solid #ccc; margin-bottom: 10px; }
+.compose {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+  margin-bottom: 14px;
+}
+.compose label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #777; }
+.compose select, .compose input {
+  border: 1px solid #ccc;
+  padding: 6px 8px;
+  font: inherit;
+  color: #333;
+}
 
 .toast {
   position: fixed;
