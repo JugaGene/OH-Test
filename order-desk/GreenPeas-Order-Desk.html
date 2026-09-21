@@ -289,7 +289,19 @@ tr.clickable:hover { background: #f6f9fc; }
   padding: 18px;
 }
 .modal h3 { margin: 0 0 12px; font-weight: 500; }
-.search { width: 100%; padding: 8px 10px; border: 1px solid #ccc; margin-bottom: 10px; }
+.compose {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+  margin-bottom: 14px;
+}
+.compose label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #777; }
+.compose select, .compose input {
+  border: 1px solid #ccc;
+  padding: 6px 8px;
+  font: inherit;
+  color: #333;
+}
 
 .toast {
   position: fixed;
@@ -441,7 +453,7 @@ window.GP_SEED = {
   ]
 };
 
-const STORE = "gp.orderdesk.v2";
+const STORE = "gp.orderdesk.v3";
 const PIN_KEY = "gp.orderdesk.pin";
 const SESSION = "gp.orderdesk.session";
 
@@ -474,48 +486,42 @@ async function sha(text) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function uniqPush(list, keyFn, item) {
+  const k = keyFn(item);
+  if (!k || list.some((x) => keyFn(x) === k)) return;
+  list.push(item);
+}
+
 function catalogsFrom(packing) {
   const customers = [];
-  const seenC = new Set();
+  const products = [];
+  const packings = [];
+  const boxes = [];
+  const pallets = [];
+  const origins = [];
+  const eans = [];
   packing.forEach((p) => {
-    const key = p.customerId + "|" + p.customerName;
-    if (seenC.has(key)) return;
-    seenC.add(key);
-    customers.push({
+    uniqPush(customers, (c) => c.id, {
       id: p.customerId,
       no: p.customerNo,
       name: p.customerName,
       delivery: p.delivery,
-      address: p.address,
-      gln: p.gln || window.GP_SEED.company.gln
+      address: p.address
     });
-  });
-  const products = [];
-  const seenP = new Set();
-  packing.forEach((p) => {
-    const key = [p.productCode, p.ean, p.box, p.packing].join("|");
-    if (seenP.has(key)) return;
-    seenP.add(key);
-    products.push({
+    uniqPush(products, (x) => String(x.code), {
       code: String(p.productCode),
-      name: p.product,
-      packing: p.packing,
-      packingCode: String(p.packingCode),
-      box: p.box,
-      unitsPerBox: p.unitsPerBox,
-      pallet: p.pallet,
-      boxesPerPallet: p.boxesPerPallet,
-      ean: p.ean,
-      gtin: p.gtin,
-      origin: p.origin,
-      dessin: p.dessin,
-      description: p.description,
-      unit: "krt"
+      name: p.product
     });
+    uniqPush(packings, (x) => x.name, {
+      name: p.packing,
+      code: String(p.packingCode || "")
+    });
+    uniqPush(boxes, (x) => x.name, { name: p.box });
+    if (p.pallet && !pallets.includes(p.pallet)) pallets.push(p.pallet);
+    if (p.origin && !origins.includes(p.origin)) origins.push(p.origin);
+    if (p.ean && !eans.includes(p.ean)) eans.push(p.ean);
   });
-  const boxes = [...new Set(packing.map((p) => p.box))];
-  const pallets = [...new Set(packing.map((p) => p.pallet))];
-  return { customers, products, boxes, pallets };
+  return { customers, products, packings, boxes, pallets, origins, eans };
 }
 
 function uid() {
@@ -527,11 +533,11 @@ function boxLabel(box) {
   return box || "Kasse";
 }
 
-function produceLabel(p) {
-  const u = Number(p.unitsPerBox) || "";
-  const pack = p.packing || "";
-  const name = p.product || "";
-  return `${u} x ${pack} ${name}, origin ${p.origin || ""}`.replace(/\s+/g, " ").trim();
+function produceLabel(productName, packingName, units, origin) {
+  const u = units || "";
+  return `${u} x ${packingName || ""} ${productName || ""}${origin ? ", origin " + origin : ""}`
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function emptyLine() {
@@ -563,7 +569,7 @@ function linesFromPacking(p) {
     {
       id: uid(),
       productNo: p.ean || p.gtin || p.productCode,
-      productName: produceLabel(p),
+      productName: produceLabel(p.product, p.packing, p.unitsPerBox, p.origin),
       quantity: qty,
       unit: "Box",
       unitPrice: 0,
@@ -616,7 +622,7 @@ function defaultState() {
   return {
     packing,
     ...catalogsFrom(packing),
-    sales: salesFromPacking(packing),
+    sales: [],
     activeSale: null
   };
 }
@@ -822,7 +828,8 @@ function renderList() {
     <div class="kpi">
       <div class="card"><span>Customers</span><b>${state.customers.length}</b></div>
       <div class="card"><span>Product SKUs</span><b>${state.products.length}</b></div>
-      <div class="card"><span>Box types</span><b>${state.boxes.length}</b></div>
+      <div class="card"><span>Boxes</span><b>${state.boxes.length}</b></div>
+      <div class="card"><span>Packings</span><b>${(state.packings || []).length}</b></div>
       <div class="card"><span>Sales orders</span><b>${state.sales.length}</b></div>
     </div>
     <div class="card">
@@ -833,7 +840,7 @@ function renderList() {
           <tbody>${rows || `<tr><td colspan="6">No sales orders yet</td></tr>`}</tbody>
         </table>
       </div>
-      <p class="hint">Open an order to write lines as in e-conomic (product no., name, quantity, unit, price, discount, department) using your packing references — not as a spreadsheet.</p>
+      <p class="hint">Use <b>New order</b> for a blank e-conomic page. Add a customer, then add crate and product as separate lines from the catalogues — not as a fixed packing recipe.</p>
     </div>`;
 }
 
@@ -973,14 +980,16 @@ function renderCatalog() {
     )
     .join("");
   const pRows = state.products
-    .map(
-      (p) => `<tr>
-        <td>${esc(p.code)}</td><td>${esc(p.name)}</td><td>${esc(p.packing)}</td>
-        <td>${esc(p.box)}</td><td>${esc(p.unitsPerBox)}</td><td>${esc(p.pallet)}</td>
-        <td>${esc(p.ean)}</td><td>${esc(p.origin)}</td>
-      </tr>`
-    )
+    .map((p) => `<tr><td>${esc(p.code)}</td><td>${esc(p.name)}</td></tr>`)
     .join("");
+  const packRows = (state.packings || [])
+    .map((p) => `<tr><td>${esc(p.code)}</td><td>${esc(p.name)}</td></tr>`)
+    .join("");
+  const boxRows = (state.boxes || [])
+    .map((b) => `<tr><td>${esc(b.name)}</td></tr>`)
+    .join("");
+  const palRows = (state.pallets || []).map((p) => `<tr><td>${esc(p)}</td></tr>`).join("");
+  const originRows = (state.origins || []).map((p) => `<tr><td>${esc(p)}</td></tr>`).join("");
   return `
     <div class="card" style="margin-bottom:16px">
       <h3>Customers (${state.customers.length})</h3>
@@ -989,18 +998,45 @@ function renderCatalog() {
         <tbody>${cRows}</tbody>
       </table></div>
     </div>
-    <div class="card" style="margin-bottom:16px">
-      <h3>Products & packing SKUs (${state.products.length})</h3>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Product no.</th><th>Name</th><th>Packing</th><th>Box</th><th>Units/box</th><th>Pallet</th><th>EAN</th><th>Origin</th></tr></thead>
-        <tbody>${pRows}</tbody>
-      </table></div>
+    <div class="grid-2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>Products (${state.products.length})</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Product no.</th><th>Name</th></tr></thead>
+          <tbody>${pRows}</tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h3>Packing (${(state.packings || []).length})</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Packing code</th><th>Packing name</th></tr></thead>
+          <tbody>${packRows}</tbody>
+        </table></div>
+      </div>
     </div>
-    <div class="grid-2">
-      <div class="card"><h3>Boxes</h3>
-        <p class="hint">${state.boxes.map(esc).join(" · ") || "—"}</p></div>
-      <div class="card"><h3>Pallets</h3>
-        <p class="hint">${state.pallets.map(esc).join(" · ") || "—"}</p></div>
+    <div class="grid-2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>Boxes (${(state.boxes || []).length})</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Box name</th></tr></thead>
+          <tbody>${boxRows}</tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h3>Pallets (${(state.pallets || []).length})</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Pallet</th></tr></thead>
+          <tbody>${palRows}</tbody>
+        </table></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Origins (${(state.origins || []).length})</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Origin</th></tr></thead>
+        <tbody>${originRows}</tbody>
+      </table></div>
+      <p class="hint">These lists are independent. Mix any customer with any product, packing and box when you build an order.</p>
     </div>`;
 }
 
@@ -1019,7 +1055,7 @@ function renderPacking() {
       <thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Boxes</th><th>Box</th><th>Packing</th><th>Pallet</th><th>Lot</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <p class="hint">This is the logistics source. Sales orders map each packing row to an e-conomic line.</p>
+    <p class="hint">Historical packing combinations only. Do not use this as a locked recipe — pick customer, box, packing and product separately on the order.</p>
   </div>`;
 }
 
@@ -1138,58 +1174,109 @@ function pickCustomer() {
   );
 }
 
+function options(list, valueFn, labelFn) {
+  return list
+    .map((item) => {
+      const v = valueFn(item);
+      const l = labelFn(item);
+      return `<option value="${esc(v)}">${esc(l)}</option>`;
+    })
+    .join("");
+}
+
 function pickProduct() {
+  const products = state.products || [];
+  const packings = state.packings || [];
+  const boxes = state.boxes || [];
+  const pallets = state.pallets || [];
+  const origins = state.origins || [];
+  const eans = state.eans || [];
   openModal(
-    `<h3>Add order line from catalogue</h3>
-     <input class="search" id="q" placeholder="Search product, box, EAN, packing…" />
-     <div class="table-wrap"><table>
-       <thead><tr><th>No.</th><th>Name</th><th>Packing</th><th>Box</th><th>EAN</th></tr></thead>
-       <tbody id="pickBody"></tbody></table></div>`,
+    `<h3>New order line</h3>
+     <p class="hint" style="padding:0 0 12px">Pick each reference on its own. Add a crate line, a product line, or both.</p>
+     <div class="compose">
+       <label>Kind
+         <select id="cKind">
+           <option value="box">Crate / box (Kasser)</option>
+           <option value="product">Product (Box)</option>
+           <option value="both">Crate and product as two lines</option>
+         </select>
+       </label>
+       <label>Box
+         <select id="cBox"><option value="">—</option>${options(boxes, (b) => b.name, (b) => b.name)}</select>
+       </label>
+       <label>Product
+         <select id="cProd"><option value="">—</option>${options(products, (p) => p.code, (p) => p.code + " · " + p.name)}</select>
+       </label>
+       <label>Packing
+         <select id="cPack"><option value="">—</option>${options(packings, (p) => p.name, (p) => (p.code ? p.code + " · " : "") + p.name)}</select>
+       </label>
+       <label>Origin
+         <select id="cOrig"><option value="">—</option>${origins.map((o) => `<option>${esc(o)}</option>`).join("")}</select>
+       </label>
+       <label>Pallet
+         <select id="cPal"><option value="">—</option>${pallets.map((o) => `<option>${esc(o)}</option>`).join("")}</select>
+       </label>
+       <label>Units per box
+         <input id="cUnits" type="number" step="1" value="10" />
+       </label>
+       <label>Quantity
+         <input id="cQty" type="number" step="1" value="1" />
+       </label>
+       <label>Product no. (optional override)
+         <select id="cEan"><option value="">Use product / box code</option>${eans.map((o) => `<option>${esc(o)}</option>`).join("")}</select>
+       </label>
+     </div>
+     <button class="btn primary" id="cAdd" type="button">Add to order</button>`,
     (bg) => {
-      const draw = () => {
-        const q = (bg.querySelector("#q").value || "").toLowerCase();
-        bg.querySelector("#pickBody").innerHTML = state.products
-          .filter((p) => `${p.code} ${p.name} ${p.box} ${p.ean} ${p.packing}`.toLowerCase().includes(q))
-          .map(
-            (p, i) => `<tr class="clickable" data-i="${i}" data-code="${esc(p.code)}" data-ean="${esc(p.ean)}" data-box="${esc(p.box)}">
-              <td>${esc(p.code)}</td><td>${esc(p.name)}</td><td>${esc(p.packing)}</td><td>${esc(p.box)}</td><td>${esc(p.ean)}</td></tr>`
-          )
-          .join("");
-        bg.querySelectorAll("#pickBody tr").forEach((tr) => {
-          tr.onclick = () => {
-            const p = state.products.find(
-              (x) => x.code === tr.dataset.code && x.ean === tr.dataset.ean && x.box === tr.dataset.box
-            );
-            const sale = state.activeSale;
-            const qty = p.boxesPerPallet || 1;
-            sale.lines.push({
-              id: uid(),
-              productNo: p.packingCode || p.box,
-              productName: boxLabel(p.box),
-              quantity: qty,
-              unit: "Kasser",
-              unitPrice: 0,
-              discount: 0,
-              department: ""
-            });
-            sale.lines.push({
-              id: uid(),
-              productNo: p.ean || p.code,
-              productName: produceLabel(p),
-              quantity: qty,
-              unit: "Box",
-              unitPrice: 0,
-              discount: 0,
-              department: ""
-            });
-            if (!sale.isNew) persistSale(sale);
-            bg.classList.remove("on");
-            render();
-          };
-        });
+      bg.querySelector("#cAdd").onclick = () => {
+        const kind = bg.querySelector("#cKind").value;
+        const boxName = bg.querySelector("#cBox").value;
+        const prodCode = bg.querySelector("#cProd").value;
+        const packName = bg.querySelector("#cPack").value;
+        const origin = bg.querySelector("#cOrig").value;
+        const units = Number(bg.querySelector("#cUnits").value) || 0;
+        const qty = Number(bg.querySelector("#cQty").value) || 0;
+        const ean = bg.querySelector("#cEan").value;
+        const product = products.find((p) => String(p.code) === String(prodCode));
+        const packing = packings.find((p) => p.name === packName);
+        const sale = state.activeSale;
+        if (kind === "box" || kind === "both") {
+          if (!boxName) {
+            toast("Choose a box");
+            return;
+          }
+          sale.lines.push({
+            id: uid(),
+            productNo: (packing && packing.code) || boxName,
+            productName: boxLabel(boxName),
+            quantity: qty,
+            unit: "Kasser",
+            unitPrice: 0,
+            discount: 0,
+            department: ""
+          });
+        }
+        if (kind === "product" || kind === "both") {
+          if (!product) {
+            toast("Choose a product");
+            return;
+          }
+          sale.lines.push({
+            id: uid(),
+            productNo: ean || product.code,
+            productName: produceLabel(product.name, packName, units, origin),
+            quantity: qty,
+            unit: "Box",
+            unitPrice: 0,
+            discount: 0,
+            department: ""
+          });
+        }
+        if (!sale.isNew) persistSale(sale);
+        bg.classList.remove("on");
+        render();
       };
-      bg.querySelector("#q").oninput = draw;
-      draw();
     }
   );
 }
@@ -1206,9 +1293,8 @@ document.getElementById("fileCsv").addEventListener("change", async (e) => {
   }
   state.packing = packing;
   Object.assign(state, catalogsFrom(packing));
-  state.sales = salesFromPacking(packing);
   save();
-  toast("Imported locally — " + packing.length + " packing rows");
+  toast("Catalogues updated locally — " + packing.length + " packing rows");
   view = "orders";
   render();
   e.target.value = "";
