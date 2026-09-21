@@ -139,8 +139,8 @@ button.btn.save { background: #1f6b45; border-color: #1f6b45; color: #fff; }
   border: 1px solid #d0d0d0;
   white-space: nowrap;
 }
-.sheet tr.saved-row td { background: #e2efda; }
-.sheet tr:hover td { background: #fff2cc; }
+.station-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.lab-cop { border: 1px solid #ccc; padding: 2px 4px; }
 
 .content { padding: 12px 20px 40px; background: #fff; }
 

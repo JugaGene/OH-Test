@@ -1,20 +1,31 @@
 # GreenPeas local order desk
 
-## How to open (so it does not look broken)
+Private e-conomic-style sales orders, Excel overview, and pallet labels. Local only.
 
-1. Unzip the download completely (do not open files from inside the zip window).
-2. Go into the folder `order-desk`.
-3. **Double-click `GreenPeas-Order-Desk.html`** (or `index.html`).
-4. Create a PIN. You should see a dark green full-screen lock, then a sidebar layout.
+## Open on your PC
 
-If everything is grey text and stacked buttons, the file was opened without its design. Use the single HTML file above — design is inside that file, so it must not look like a raw document.
+1. Unzip completely.
+2. In `order-desk`, double-click **GreenPeas-Order-Desk.html**, or run `start-local.sh` / `start-local.bat` (starts `server.py` on http://127.0.0.1:8765).
+3. Set a PIN.
 
-You do **not** need the start scripts unless you prefer http://127.0.0.1:8765.
+Use **server.py** if you want Visma e-conomic (the browser cannot call their API from a double-clicked file).
 
-## Privacy
+## Orders
 
-Runs only on your PC. PIN-locked. Nothing is uploaded. Keep the GitHub repository private.
+- **New order** — empty e-conomic canvas.
+- Mix customer, product, packing and box as separate references.
+- **Save** — appears in Sales orders and Excel overview.
+- **Print order** — A4 order paper from the sales lines.
+- **Print pallet labels** — same layout as Pallet label 2026 (From/To, delivery note, dates, lot, boxes, origin, barcode). Copies = total pallets.
 
-## What it does
+## Visma e-conomic
 
-Packing rows become e-conomic-style sales lines (product no., name, quantity, unit, price, discount, department) with box, pallet, EAN and lot kept on each line.
+Yes. Under **Settings & e-conomic** paste App Secret Token and Agreement Grant Token (e-conomic → Apps). Then:
+
+- Test connection (`GET /self`)
+- Pull customers
+- Push the current saved order as an e-conomic **draft order**
+
+Tokens stay in this browser. The local proxy only talks to `restapi.e-conomic.com`. Demo tokens `demo`/`demo` are GET-only.
+
+Keep the GitHub repository private. Do not deploy this app.
