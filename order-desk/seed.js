@@ -5,7 +5,9 @@ window.GP_SEED = {
     address: "Industrivej 1e DK-5750 Ringe",
     gln: "15712515",
     ggn: "4063651251517",
-    warehouse: "1"
+    warehouse: "1",
+    phone: "+45 3050 4918",
+    country: "Danmark"
   },
   packing: [
     {
