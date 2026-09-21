@@ -1,35 +1,20 @@
 # GreenPeas local order desk
 
-Private **e-conomic-style sales order** page for packing data. It is not a spreadsheet and it is not a public website.
+## How to open (so it does not look broken)
+
+1. Unzip the download completely (do not open files from inside the zip window).
+2. Go into the folder `order-desk`.
+3. **Double-click `GreenPeas-Order-Desk.html`** (or `index.html`).
+4. Create a PIN. You should see a dark green full-screen lock, then a sidebar layout.
+
+If everything is grey text and stacked buttons, the file was opened without its design. Use the single HTML file above — design is inside that file, so it must not look like a raw document.
+
+You do **not** need the start scripts unless you prefer http://127.0.0.1:8765.
 
 ## Privacy
 
-- Runs only on **your PC** (`127.0.0.1`). It does not listen on the network.
-- After you set a PIN, the desk stays locked until you unlock it in this browser.
-- Orders you edit are stored in **this browser’s local storage**. Nothing is uploaded.
-- Keep this GitHub repository **private**. The catalogue is copied from your order-handling export so you can test offline.
-
-Do **not** host this on Render, Vercel, or any public URL.
-
-## Open on your PC
-
-1. Copy the `order-desk` folder to the machine.
-2. On Windows, double-click `start-local.bat`. On Mac/Linux: `chmod +x start-local.sh && ./start-local.sh`.
-3. Open [http://127.0.0.1:8765](http://127.0.0.1:8765).
-4. Create a PIN (min. 4 characters). Use it only on this computer.
-
-You need Python 3 (already on most Macs; on Windows install from python.org and tick “Add to PATH”).
+Runs only on your PC. PIN-locked. Nothing is uploaded. Keep the GitHub repository private.
 
 ## What it does
 
-Packing rows (customer, product, box, pallet, EAN, lot, SSCC…) are mapped to **sales order lines** like e-conomic:
-
-Line no. · Product no. · Product name · Quantity · Unit · Unit price · Discount · Total · Afdeling
-
-Each line still shows box, packing, pallet, EAN, lot and SSCC underneath so you do not retype logistics into a sheet.
-
-Unit prices are `0,00` until you type them (they were not in the export).
-
-## Import another export
-
-Use **Import CSV** (semicolon-separated, same columns as the order-handling file). Parsing happens in the browser; the file is not sent anywhere.
+Packing rows become e-conomic-style sales lines (product no., name, quantity, unit, price, discount, department) with box, pallet, EAN and lot kept on each line.
