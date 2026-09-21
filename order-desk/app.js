@@ -1,4 +1,4 @@
-const STORE = "gp.orderdesk.v1";
+const STORE = "gp.orderdesk.v3";
 const PIN_KEY = "gp.orderdesk.pin";
 const SESSION = "gp.orderdesk.session";
 
@@ -31,75 +31,124 @@ async function sha(text) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function uniqPush(list, keyFn, item) {
+  const k = keyFn(item);
+  if (!k || list.some((x) => keyFn(x) === k)) return;
+  list.push(item);
+}
+
 function catalogsFrom(packing) {
   const customers = [];
-  const seenC = new Set();
+  const products = [];
+  const packings = [];
+  const boxes = [];
+  const pallets = [];
+  const origins = [];
+  const eans = [];
   packing.forEach((p) => {
-    const key = p.customerId + "|" + p.customerName;
-    if (seenC.has(key)) return;
-    seenC.add(key);
-    customers.push({
+    uniqPush(customers, (c) => c.id, {
       id: p.customerId,
       no: p.customerNo,
       name: p.customerName,
       delivery: p.delivery,
-      address: p.address,
-      gln: p.gln || window.GP_SEED.company.gln
+      address: p.address
     });
-  });
-  const products = [];
-  const seenP = new Set();
-  packing.forEach((p) => {
-    const key = [p.productCode, p.ean, p.box, p.packing].join("|");
-    if (seenP.has(key)) return;
-    seenP.add(key);
-    products.push({
+    uniqPush(products, (x) => String(x.code), {
       code: String(p.productCode),
-      name: p.product,
-      packing: p.packing,
-      packingCode: String(p.packingCode),
-      box: p.box,
-      unitsPerBox: p.unitsPerBox,
-      pallet: p.pallet,
-      boxesPerPallet: p.boxesPerPallet,
-      ean: p.ean,
-      gtin: p.gtin,
-      origin: p.origin,
-      dessin: p.dessin,
-      description: p.description,
-      unit: "krt"
+      name: p.product
     });
+    uniqPush(packings, (x) => x.name, {
+      name: p.packing,
+      code: String(p.packingCode || "")
+    });
+    uniqPush(boxes, (x) => x.name, { name: p.box });
+    if (p.pallet && !pallets.includes(p.pallet)) pallets.push(p.pallet);
+    if (p.origin && !origins.includes(p.origin)) origins.push(p.origin);
+    if (p.ean && !eans.includes(p.ean)) eans.push(p.ean);
   });
-  const boxes = [...new Set(packing.map((p) => p.box))];
-  const pallets = [...new Set(packing.map((p) => p.pallet))];
-  return { customers, products, boxes, pallets };
+  return { customers, products, packings, boxes, pallets, origins, eans };
 }
 
-function lineFromPacking(p, idx) {
+function uid() {
+  return crypto.randomUUID();
+}
+
+function boxLabel(box) {
+  if (/europool/i.test(box || "")) return "EuroPool kasse " + box.replace(/europool\s*/i, "");
+  return box || "Kasse";
+}
+
+function produceLabel(productName, packingName, units, origin) {
+  const u = units || "";
+  return `${u} x ${packingName || ""} ${productName || ""}${origin ? ", origin " + origin : ""}`
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function emptyLine() {
   return {
-    id: crypto.randomUUID(),
-    lineNo: (idx + 1) * 1,
-    productNo: String(p.productCode),
-    productName: p.product,
-    quantity: Number(p.boxes),
-    unit: "krt",
+    id: uid(),
+    productNo: "",
+    productName: "",
+    quantity: "",
+    unit: "",
     unitPrice: 0,
     discount: 0,
-    department: "Packing",
-    box: p.box,
-    packing: p.packing,
-    pallet: p.pallet,
-    unitsPerBox: p.unitsPerBox,
-    boxesPerPallet: p.boxesPerPallet,
-    ean: p.ean,
-    gtin: p.gtin,
-    lot: p.lot,
-    origin: p.origin,
-    sscc: p.sscc,
-    bbd: fmtDate(p.bbd),
-    netKg: p.netKg,
-    description: p.description,
-    packingOrder: p.orderNo
+    department: ""
+  };
+}
+
+function linesFromPacking(p) {
+  const qty = Number(p.boxes) || 0;
+  return [
+    {
+      id: uid(),
+      productNo: p.packingCode || p.box,
+      productName: boxLabel(p.box),
+      quantity: qty,
+      unit: "Kasser",
+      unitPrice: 0,
+      discount: 0,
+      department: ""
+    },
+    {
+      id: uid(),
+      productNo: p.ean || p.gtin || p.productCode,
+      productName: produceLabel(p.product, p.packing, p.unitsPerBox, p.origin),
+      quantity: qty,
+      unit: "Box",
+      unitPrice: 0,
+      discount: 0,
+      department: ""
+    }
+  ];
+}
+
+function saleFromPackingRows(rows) {
+  const first = rows[0];
+  return {
+    id: uid(),
+    number: first.orderNo,
+    customerId: first.customerId,
+    customerNo: first.customerNo,
+    customerName: first.customerName,
+    customerAddress: first.delivery,
+    deliveryName: first.customerName,
+    delivery: first.delivery,
+    paymentTerms: "Netto 30 dage",
+    date: fmtDate(first.orderDate),
+    deliveryDate: fmtDate(first.deliveryDate),
+    heading: "",
+    text1: first.customerRef,
+    text2: first.gtin || first.ean,
+    externalId: "",
+    yourRef: "",
+    ourRef: "",
+    ourRef2: "",
+    otherRef: rows.map((r) => r.orderNo).join(", "),
+    layout: "",
+    currency: "DKK",
+    lines: rows.flatMap(linesFromPacking)
   };
 }
 
@@ -110,29 +159,7 @@ function salesFromPacking(packing) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(p);
   });
-  const sales = [];
-  groups.forEach((rows) => {
-    const first = rows[0];
-    sales.push({
-      id: crypto.randomUUID(),
-      number: "S-" + first.orderNo,
-      customerId: first.customerId,
-      customerNo: first.customerNo,
-      customerName: first.customerName,
-      delivery: first.delivery,
-      paymentTerms: "Netto 14 dage",
-      date: fmtDate(first.orderDate),
-      deliveryDate: fmtDate(first.deliveryDate),
-      yourRef: first.customerRef,
-      ourRef: first.internalRef && first.internalRef !== "0" ? first.internalRef : first.orderNo,
-      otherRef: rows.map((r) => r.orderNo).join(", "),
-      heading: "Sales order",
-      layout: "Order",
-      currency: "DKK",
-      lines: rows.map(lineFromPacking)
-    });
-  });
-  return sales;
+  return [...groups.values()].map(saleFromPackingRows);
 }
 
 function defaultState() {
@@ -140,7 +167,7 @@ function defaultState() {
   return {
     packing,
     ...catalogsFrom(packing),
-    sales: salesFromPacking(packing),
+    sales: [],
     activeSale: null
   };
 }
@@ -257,23 +284,50 @@ document.querySelectorAll(".nav button").forEach((b) => {
 
 function blankSale() {
   return {
-    id: crypto.randomUUID(),
-    number: "S-NEW",
+    id: uid(),
+    number: "",
+    isNew: true,
     customerId: "",
     customerNo: "",
     customerName: "",
+    customerAddress: "",
+    deliveryName: "",
     delivery: "",
-    paymentTerms: "Netto 14 dage",
-    date: new Date().toISOString().slice(0, 10),
+    paymentTerms: "",
+    date: "",
     deliveryDate: "",
+    heading: "",
+    text1: "",
+    text2: "",
+    externalId: "",
     yourRef: "",
     ourRef: "",
+    ourRef2: "",
     otherRef: "",
-    heading: "Sales order",
-    layout: "Order",
+    layout: "",
     currency: "DKK",
     lines: []
   };
+}
+
+function daDate(iso) {
+  if (!iso) return "";
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  return `${m[3]}.${m[2]}.${m[1].slice(2)}`;
+}
+
+function persistSale(sale) {
+  if (!sale) return;
+  if (!sale.number) {
+    const nums = state.sales.map((s) => parseInt(s.number, 10)).filter((n) => n > 0);
+    sale.number = String((nums.length ? Math.max(...nums) : 28000) + 1);
+  }
+  sale.isNew = false;
+  const i = state.sales.findIndex((x) => x.id === sale.id);
+  if (i >= 0) state.sales[i] = sale;
+  else state.sales.unshift(sale);
+  save();
 }
 
 function esc(s) {
@@ -287,7 +341,9 @@ function esc(s) {
 function render() {
   const titles = {
     orders: "Sales orders",
-    editor: "Order",
+    editor: state.activeSale && state.activeSale.number && !state.activeSale.isNew
+      ? "Order no. " + state.activeSale.number
+      : "Order",
     catalog: "Clients, products & boxes",
     packing: "Packing source"
   };
@@ -317,7 +373,8 @@ function renderList() {
     <div class="kpi">
       <div class="card"><span>Customers</span><b>${state.customers.length}</b></div>
       <div class="card"><span>Product SKUs</span><b>${state.products.length}</b></div>
-      <div class="card"><span>Box types</span><b>${state.boxes.length}</b></div>
+      <div class="card"><span>Boxes</span><b>${state.boxes.length}</b></div>
+      <div class="card"><span>Packings</span><b>${(state.packings || []).length}</b></div>
       <div class="card"><span>Sales orders</span><b>${state.sales.length}</b></div>
     </div>
     <div class="card">
@@ -328,7 +385,7 @@ function renderList() {
           <tbody>${rows || `<tr><td colspan="6">No sales orders yet</td></tr>`}</tbody>
         </table>
       </div>
-      <p class="hint">Open an order to write lines as in e-conomic (product no., name, quantity, unit, price, discount, department) using your packing references — not as a spreadsheet.</p>
+      <p class="hint">Use <b>New order</b> for a blank e-conomic page. Add a customer, then add crate and product as separate lines from the catalogues — not as a fixed packing recipe.</p>
     </div>`;
 }
 
@@ -336,12 +393,20 @@ function renderEditor() {
   const s = state.activeSale;
   if (!s) return "<p>No order selected.</p>";
   const t = saleTotals(s);
-  const cust = s.customerName
-    ? `<button class="cust-btn filled" id="pickCust"><strong>${esc(s.customerName)}</strong><small>No. ${esc(s.customerNo)} · ID ${esc(s.customerId)}</small></button>`
-    : `<button class="cust-btn" id="pickCust">Add customer</button>`;
+  const filled = Boolean(s.customerName);
+  const title = s.number && !s.isNew ? `Order no. ${esc(s.number)}` : "Order";
+  const cust = filled
+    ? `<div class="cust-no">Customer no. ${esc(s.customerNo)} <span class="pencil">👍</span></div>
+       <div class="cust-name" id="pickCust" style="cursor:pointer">${esc(s.customerName)}</div>
+       <div class="cust-addr"><textarea id="fAddr" rows="2">${esc(s.customerAddress || s.delivery)}</textarea></div>`
+    : `<button class="cust-add" id="pickCust">Add customer</button>`;
+  const terms = s.paymentTerms || "";
+  const dateShown = daDate(s.date);
+  const delivDate = daDate(s.deliveryDate);
   const lineRows = s.lines
     .map(
       (l, i) => `<tr data-line="${l.id}">
+        <td><input type="checkbox" /></td>
         <td>${i + 1}</td>
         <td><input data-f="productNo" value="${esc(l.productNo)}" /></td>
         <td><input data-f="productName" value="${esc(l.productName)}" /></td>
@@ -351,65 +416,90 @@ function renderEditor() {
         <td class="num"><input data-f="discount" type="number" step="0.01" value="${esc(l.discount)}" /></td>
         <td class="num">${money(lineTotal(l))}</td>
         <td><input data-f="department" value="${esc(l.department)}" /></td>
-        <td><button class="icon-del" data-del="${l.id}" title="Remove">✕</button></td>
-      </tr>
-      <tr>
-        <td></td>
-        <td colspan="9" style="color:#5c675f;font-size:12px;padding-top:0">
-          Box ${esc(l.box)} · ${esc(l.packing)} · ${esc(l.unitsPerBox)} units/box · Pallet ${esc(l.pallet)} (${esc(l.boxesPerPallet)}/plt)
-          · EAN ${esc(l.ean)} · Lot ${esc(l.lot)} · Origin ${esc(l.origin)} · SSCC ${esc(l.sscc)} · BBD ${esc(l.bbd)} · ${esc(l.netKg)} kg
-          · Packing order ${esc(l.packingOrder)}
-        </td>
       </tr>`
     )
     .join("");
-  const chips = [
-    s.delivery && `Delivery: ${s.delivery}`,
-    `${s.lines.reduce((n, l) => n + Number(l.quantity || 0), 0)} cartons`,
-    `${s.lines.reduce((n, l) => n + Number(l.netKg || 0), 0)} kg net`
-  ]
-    .filter(Boolean)
-    .map((c) => `<span class="chip">${esc(c)}</span>`)
-    .join("");
   return `
-    <div class="eco">
-      <div class="eco-head">
-        <div class="eco-col">
+    <div class="eco-page">
+      <div class="eco-top">
+        <h1>${title}</h1>
+        <div class="eco-balance">Balance incl. current amount<b>${filled ? money(t.total) : ""}</b></div>
+      </div>
+      <div class="eco-grid">
+        <div>
           ${cust}
-          <div class="meta-row">
-            <div><label>Payment terms</label><input id="fTerms" value="${esc(s.paymentTerms)}" /></div>
-            <div><label>Date</label><input id="fDate" type="date" value="${esc(s.date)}" /></div>
+          <div class="pair">
+            <div>
+              <div class="lbl">Payment terms</div>
+              <div class="val ${terms ? "" : "ph"}"><input id="fTerms" placeholder="" value="${esc(terms)}" /></div>
+            </div>
+            <div>
+              <div class="lbl">Date</div>
+              <div class="val ${s.date ? "" : "ph"}"><input id="fDate" type="date" value="${esc(s.date)}" /></div>
+            </div>
           </div>
-          <div class="meta-row">
-            <div style="flex:1"><label>Delivery</label>
-              <input id="fDeliv" style="width:100%" value="${esc(s.delivery)}" /></div>
+          <div style="margin-top:16px">
+            <div class="lbl">Delivery</div>
+            ${
+              filled
+                ? `<div class="val"><input id="fDelName" value="${esc(s.deliveryName || s.customerName)}" /></div>
+                   <div class="val"><input id="fDeliv" value="${esc(s.delivery)}" /></div>
+                   <div class="val ${s.deliveryDate ? "" : "ph"}"><input id="fDelDate" type="date" value="${esc(s.deliveryDate)}" /></div>`
+                : `<div class="val ph">Address</div>
+                   <div class="val ph">Delivery terms and date</div>
+                   <input id="fDelName" type="hidden" />
+                   <input id="fDeliv" type="hidden" />
+                   <input id="fDelDate" type="hidden" />`
+            }
           </div>
         </div>
-        <div class="eco-col notes">
-          <strong>Notes and references</strong>
-          <div class="row"><label>Heading</label><input id="fHead" value="${esc(s.heading)}" /></div>
-          <div class="row"><label>Your ref.</label><input id="fYref" value="${esc(s.yourRef)}" /></div>
-          <div class="row"><label>Our ref.</label><input id="fOref" value="${esc(s.ourRef)}" /></div>
-          <div class="row"><label>Other ref.</label><input id="fXref" value="${esc(s.otherRef)}" /></div>
-          <div class="row"><label>Layout</label><input id="fLay" value="${esc(s.layout)}" /></div>
+        <div class="notes">
+          <div class="notes-title">Notes and references</div>
+          ${[
+            ["Heading", "fHead", s.heading],
+            ["Text 1", "fT1", s.text1],
+            ["Text 2", "fT2", s.text2],
+            ["External Id", "fExt", s.externalId],
+            ["Your ref.", "fYref", s.yourRef],
+            ["Our ref.", "fOref", s.ourRef],
+            ["Our ref. 2", "fOref2", s.ourRef2],
+            ["Other ref.", "fXref", s.otherRef]
+          ]
+            .map(
+              ([lab, id, val]) =>
+                `<div class="nrow"><span>${lab}</span><input id="${id}" value="${esc(val)}" /></div>`
+            )
+            .join("")}
+          <div class="attach">Attached documents</div>
         </div>
-        <div class="eco-col totals">
-          <div class="preview" id="btnPrint">Show order</div>
-          <div class="row"><span>Subtotal</span><span>${money(t.sub)}</span></div>
-          <div class="row"><span>VAT (25%)</span><span>${money(t.vat)}</span></div>
-          <div class="row grand"><span>Total <span class="dkk">${esc(s.currency)}</span></span><span>${money(t.total)}</span></div>
+        <div>
+          <div class="eco-right">
+            <div class="show-order" id="btnPrint"><span>🔍 Show order</span></div>
+            <div class="totals">
+              <div class="trow"><span>Subtotal</span><span>${money(t.sub)}</span></div>
+              <div class="trow"><span>VAT</span><span>${money(t.vat)}</span></div>
+              <div class="trow"><span>Margin</span><span>${money(t.sub)} (100%)</span></div>
+              <div class="total"><span>Total <span class="dkk">${esc(s.currency)}</span></span><span>${money(t.total)}</span></div>
+            </div>
+          </div>
+          <div class="layout-line">Layout: <input id="fLay" value="${esc(s.layout)}" placeholder="" /></div>
         </div>
       </div>
       <div class="eco-actions">
         <button class="btn primary" id="btnNewLine">New order line</button>
-        <button class="btn ghost" id="btnSave">Save locally</button>
-        <button class="btn" id="btnPdf">Print / PDF</button>
-        <span class="right">${s.lines.length} item(s) in total</span>
+        ${filled ? `<button class="btn" id="btnSend">Send order</button>` : ""}
+        <button class="btn" id="btnSave">Convert to invoice</button>
+        <button class="btn">More ▾</button>
+        <div class="right">
+          <button class="ico" id="btnPdf" title="Print">🖨</button>
+          <span>${s.lines.length} item(s) in total</span>
+        </div>
       </div>
-      <div class="table-wrap lines">
+      <div class="eco-lines">
         <table>
           <thead>
             <tr>
+              <th></th>
               <th>Line no.</th>
               <th>Product no.</th>
               <th>Product name</th>
@@ -419,13 +509,12 @@ function renderEditor() {
               <th>Discount (%)</th>
               <th>Total</th>
               <th>Afdeling</th>
-              <th></th>
             </tr>
           </thead>
-          <tbody>${lineRows || `<tr><td colspan="10" style="color:#888">No lines — choose New order line and pick from your product catalogue.</td></tr>`}</tbody>
+          <tbody>${lineRows}</tbody>
         </table>
+        <div class="line-foot">${s.lines.length} item(s) in total</div>
       </div>
-      <div class="pack-strip">${chips}</div>
     </div>`;
 }
 
@@ -436,14 +525,16 @@ function renderCatalog() {
     )
     .join("");
   const pRows = state.products
-    .map(
-      (p) => `<tr>
-        <td>${esc(p.code)}</td><td>${esc(p.name)}</td><td>${esc(p.packing)}</td>
-        <td>${esc(p.box)}</td><td>${esc(p.unitsPerBox)}</td><td>${esc(p.pallet)}</td>
-        <td>${esc(p.ean)}</td><td>${esc(p.origin)}</td>
-      </tr>`
-    )
+    .map((p) => `<tr><td>${esc(p.code)}</td><td>${esc(p.name)}</td></tr>`)
     .join("");
+  const packRows = (state.packings || [])
+    .map((p) => `<tr><td>${esc(p.code)}</td><td>${esc(p.name)}</td></tr>`)
+    .join("");
+  const boxRows = (state.boxes || [])
+    .map((b) => `<tr><td>${esc(b.name)}</td></tr>`)
+    .join("");
+  const palRows = (state.pallets || []).map((p) => `<tr><td>${esc(p)}</td></tr>`).join("");
+  const originRows = (state.origins || []).map((p) => `<tr><td>${esc(p)}</td></tr>`).join("");
   return `
     <div class="card" style="margin-bottom:16px">
       <h3>Customers (${state.customers.length})</h3>
@@ -452,18 +543,45 @@ function renderCatalog() {
         <tbody>${cRows}</tbody>
       </table></div>
     </div>
-    <div class="card" style="margin-bottom:16px">
-      <h3>Products & packing SKUs (${state.products.length})</h3>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Product no.</th><th>Name</th><th>Packing</th><th>Box</th><th>Units/box</th><th>Pallet</th><th>EAN</th><th>Origin</th></tr></thead>
-        <tbody>${pRows}</tbody>
-      </table></div>
+    <div class="grid-2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>Products (${state.products.length})</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Product no.</th><th>Name</th></tr></thead>
+          <tbody>${pRows}</tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h3>Packing (${(state.packings || []).length})</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Packing code</th><th>Packing name</th></tr></thead>
+          <tbody>${packRows}</tbody>
+        </table></div>
+      </div>
     </div>
-    <div class="grid-2">
-      <div class="card"><h3>Boxes</h3>
-        <p class="hint">${state.boxes.map(esc).join(" · ") || "—"}</p></div>
-      <div class="card"><h3>Pallets</h3>
-        <p class="hint">${state.pallets.map(esc).join(" · ") || "—"}</p></div>
+    <div class="grid-2" style="margin-bottom:16px">
+      <div class="card">
+        <h3>Boxes (${(state.boxes || []).length})</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Box name</th></tr></thead>
+          <tbody>${boxRows}</tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h3>Pallets (${(state.pallets || []).length})</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Pallet</th></tr></thead>
+          <tbody>${palRows}</tbody>
+        </table></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Origins (${(state.origins || []).length})</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Origin</th></tr></thead>
+        <tbody>${originRows}</tbody>
+      </table></div>
+      <p class="hint">These lists are independent. Mix any customer with any product, packing and box when you build an order.</p>
     </div>`;
 }
 
@@ -482,7 +600,7 @@ function renderPacking() {
       <thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Boxes</th><th>Box</th><th>Packing</th><th>Pallet</th><th>Lot</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <p class="hint">This is the logistics source. Sales orders map each packing row to an e-conomic line.</p>
+    <p class="hint">Historical packing combinations only. Do not use this as a locked recipe — pick customer, box, packing and product separately on the order.</p>
   </div>`;
 }
 
@@ -499,16 +617,28 @@ function bindView() {
   if (view !== "editor" || !sale) return;
 
   const persistHead = () => {
-    sale.paymentTerms = document.getElementById("fTerms").value;
-    sale.date = document.getElementById("fDate").value;
-    sale.delivery = document.getElementById("fDeliv").value;
-    sale.heading = document.getElementById("fHead").value;
-    sale.yourRef = document.getElementById("fYref").value;
-    sale.ourRef = document.getElementById("fOref").value;
-    sale.otherRef = document.getElementById("fXref").value;
-    sale.layout = document.getElementById("fLay").value;
+    const g = (id) => document.getElementById(id)?.value ?? "";
+    sale.paymentTerms = g("fTerms");
+    sale.date = g("fDate");
+    sale.customerAddress = g("fAddr") || sale.customerAddress;
+    sale.deliveryName = g("fDelName") || sale.deliveryName;
+    sale.delivery = g("fDeliv") || sale.delivery;
+    sale.deliveryDate = g("fDelDate") || sale.deliveryDate;
+    sale.heading = g("fHead");
+    sale.text1 = g("fT1");
+    sale.text2 = g("fT2");
+    sale.externalId = g("fExt");
+    sale.yourRef = g("fYref");
+    sale.ourRef = g("fOref");
+    sale.ourRef2 = g("fOref2");
+    sale.otherRef = g("fXref");
+    sale.layout = g("fLay");
+    if (!sale.isNew) persistSale(sale);
   };
-  ["fTerms", "fDate", "fDeliv", "fHead", "fYref", "fOref", "fXref", "fLay"].forEach((id) => {
+  [
+    "fTerms", "fDate", "fAddr", "fDelName", "fDeliv", "fDelDate",
+    "fHead", "fT1", "fT2", "fExt", "fYref", "fOref", "fOref2", "fXref", "fLay"
+  ].forEach((id) => {
     const n = document.getElementById(id);
     if (n) n.addEventListener("change", persistHead);
   });
@@ -518,27 +648,27 @@ function bindView() {
       const line = sale.lines.find((l) => l.id === id);
       const f = inp.dataset.f;
       line[f] = inp.type === "number" ? Number(inp.value) : inp.value;
-      save();
+      if (!sale.isNew) persistSale(sale);
       render();
     });
   });
   document.querySelectorAll("[data-del]").forEach((b) => {
     b.addEventListener("click", () => {
-      sale.lines = sale.lines.filter((l) => l.id !== b.dataset.del);
-      save();
-      render();
+    sale.lines = sale.lines.filter((l) => l.id !== b.dataset.del);
+    if (!sale.isNew) persistSale(sale);
+    render();
     });
   });
   document.getElementById("pickCust")?.addEventListener("click", pickCustomer);
   document.getElementById("btnNewLine")?.addEventListener("click", pickProduct);
-  document.getElementById("btnSave")?.addEventListener("click", () => {
+  const saveNow = () => {
     persistHead();
-    const i = state.sales.findIndex((x) => x.id === sale.id);
-    if (i >= 0) state.sales[i] = sale;
-    else state.sales.unshift(sale);
-    save();
-    toast("Saved on this PC only");
-  });
+    persistSale(sale);
+    toast("Saved on this PC");
+    render();
+  };
+  document.getElementById("btnSave")?.addEventListener("click", saveNow);
+  document.getElementById("btnSend")?.addEventListener("click", saveNow);
   document.getElementById("btnPrint")?.addEventListener("click", () => window.print());
   document.getElementById("btnPdf")?.addEventListener("click", () => window.print());
 }
@@ -572,7 +702,11 @@ function pickCustomer() {
               customerId: c.id,
               customerNo: c.no,
               customerName: c.name,
-              delivery: c.delivery
+              customerAddress: c.delivery,
+              deliveryName: c.name,
+              delivery: c.delivery,
+              paymentTerms: state.activeSale.paymentTerms || "Netto 30 dage",
+              date: state.activeSale.date || new Date().toISOString().slice(0, 10)
             });
             bg.classList.remove("on");
             render();
@@ -585,61 +719,109 @@ function pickCustomer() {
   );
 }
 
+function options(list, valueFn, labelFn) {
+  return list
+    .map((item) => {
+      const v = valueFn(item);
+      const l = labelFn(item);
+      return `<option value="${esc(v)}">${esc(l)}</option>`;
+    })
+    .join("");
+}
+
 function pickProduct() {
+  const products = state.products || [];
+  const packings = state.packings || [];
+  const boxes = state.boxes || [];
+  const pallets = state.pallets || [];
+  const origins = state.origins || [];
+  const eans = state.eans || [];
   openModal(
-    `<h3>Add order line from catalogue</h3>
-     <input class="search" id="q" placeholder="Search product, box, EAN, packing…" />
-     <div class="table-wrap"><table>
-       <thead><tr><th>No.</th><th>Name</th><th>Packing</th><th>Box</th><th>EAN</th></tr></thead>
-       <tbody id="pickBody"></tbody></table></div>`,
+    `<h3>New order line</h3>
+     <p class="hint" style="padding:0 0 12px">Pick each reference on its own. Add a crate line, a product line, or both.</p>
+     <div class="compose">
+       <label>Kind
+         <select id="cKind">
+           <option value="box">Crate / box (Kasser)</option>
+           <option value="product">Product (Box)</option>
+           <option value="both">Crate and product as two lines</option>
+         </select>
+       </label>
+       <label>Box
+         <select id="cBox"><option value="">—</option>${options(boxes, (b) => b.name, (b) => b.name)}</select>
+       </label>
+       <label>Product
+         <select id="cProd"><option value="">—</option>${options(products, (p) => p.code, (p) => p.code + " · " + p.name)}</select>
+       </label>
+       <label>Packing
+         <select id="cPack"><option value="">—</option>${options(packings, (p) => p.name, (p) => (p.code ? p.code + " · " : "") + p.name)}</select>
+       </label>
+       <label>Origin
+         <select id="cOrig"><option value="">—</option>${origins.map((o) => `<option>${esc(o)}</option>`).join("")}</select>
+       </label>
+       <label>Pallet
+         <select id="cPal"><option value="">—</option>${pallets.map((o) => `<option>${esc(o)}</option>`).join("")}</select>
+       </label>
+       <label>Units per box
+         <input id="cUnits" type="number" step="1" value="10" />
+       </label>
+       <label>Quantity
+         <input id="cQty" type="number" step="1" value="1" />
+       </label>
+       <label>Product no. (optional override)
+         <select id="cEan"><option value="">Use product / box code</option>${eans.map((o) => `<option>${esc(o)}</option>`).join("")}</select>
+       </label>
+     </div>
+     <button class="btn primary" id="cAdd" type="button">Add to order</button>`,
     (bg) => {
-      const draw = () => {
-        const q = (bg.querySelector("#q").value || "").toLowerCase();
-        bg.querySelector("#pickBody").innerHTML = state.products
-          .filter((p) => `${p.code} ${p.name} ${p.box} ${p.ean} ${p.packing}`.toLowerCase().includes(q))
-          .map(
-            (p, i) => `<tr class="clickable" data-i="${i}" data-code="${esc(p.code)}" data-ean="${esc(p.ean)}" data-box="${esc(p.box)}">
-              <td>${esc(p.code)}</td><td>${esc(p.name)}</td><td>${esc(p.packing)}</td><td>${esc(p.box)}</td><td>${esc(p.ean)}</td></tr>`
-          )
-          .join("");
-        bg.querySelectorAll("#pickBody tr").forEach((tr) => {
-          tr.onclick = () => {
-            const p = state.products.find(
-              (x) => x.code === tr.dataset.code && x.ean === tr.dataset.ean && x.box === tr.dataset.box
-            );
-            const sale = state.activeSale;
-            sale.lines.push({
-              id: crypto.randomUUID(),
-              lineNo: sale.lines.length + 1,
-              productNo: p.code,
-              productName: p.name,
-              quantity: p.boxesPerPallet || 1,
-              unit: p.unit,
-              unitPrice: 0,
-              discount: 0,
-              department: "Packing",
-              box: p.box,
-              packing: p.packing,
-              pallet: p.pallet,
-              unitsPerBox: p.unitsPerBox,
-              boxesPerPallet: p.boxesPerPallet,
-              ean: p.ean,
-              gtin: p.gtin,
-              lot: "",
-              origin: p.origin,
-              sscc: "",
-              bbd: "",
-              netKg: "",
-              description: p.description,
-              packingOrder: ""
-            });
-            bg.classList.remove("on");
-            render();
-          };
-        });
+      bg.querySelector("#cAdd").onclick = () => {
+        const kind = bg.querySelector("#cKind").value;
+        const boxName = bg.querySelector("#cBox").value;
+        const prodCode = bg.querySelector("#cProd").value;
+        const packName = bg.querySelector("#cPack").value;
+        const origin = bg.querySelector("#cOrig").value;
+        const units = Number(bg.querySelector("#cUnits").value) || 0;
+        const qty = Number(bg.querySelector("#cQty").value) || 0;
+        const ean = bg.querySelector("#cEan").value;
+        const product = products.find((p) => String(p.code) === String(prodCode));
+        const packing = packings.find((p) => p.name === packName);
+        const sale = state.activeSale;
+        if (kind === "box" || kind === "both") {
+          if (!boxName) {
+            toast("Choose a box");
+            return;
+          }
+          sale.lines.push({
+            id: uid(),
+            productNo: (packing && packing.code) || boxName,
+            productName: boxLabel(boxName),
+            quantity: qty,
+            unit: "Kasser",
+            unitPrice: 0,
+            discount: 0,
+            department: ""
+          });
+        }
+        if (kind === "product" || kind === "both") {
+          if (!product) {
+            toast("Choose a product");
+            return;
+          }
+          sale.lines.push({
+            id: uid(),
+            productNo: ean || product.code,
+            productName: produceLabel(product.name, packName, units, origin),
+            quantity: qty,
+            unit: "Box",
+            unitPrice: 0,
+            discount: 0,
+            department: ""
+          });
+        }
+        if (!sale.isNew) persistSale(sale);
+        bg.classList.remove("on");
+        render();
       };
-      bg.querySelector("#q").oninput = draw;
-      draw();
     }
   );
 }
@@ -656,9 +838,8 @@ document.getElementById("fileCsv").addEventListener("change", async (e) => {
   }
   state.packing = packing;
   Object.assign(state, catalogsFrom(packing));
-  state.sales = salesFromPacking(packing);
   save();
-  toast("Imported locally — " + packing.length + " packing rows");
+  toast("Catalogues updated locally — " + packing.length + " packing rows");
   view = "orders";
   render();
   e.target.value = "";
