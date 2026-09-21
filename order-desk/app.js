@@ -1,4 +1,4 @@
-const STORE = "gp.orderdesk.v1";
+const STORE = "gp.orderdesk.v2";
 const PIN_KEY = "gp.orderdesk.pin";
 const SESSION = "gp.orderdesk.session";
 
@@ -75,31 +75,86 @@ function catalogsFrom(packing) {
   return { customers, products, boxes, pallets };
 }
 
-function lineFromPacking(p, idx) {
+function uid() {
+  return crypto.randomUUID();
+}
+
+function boxLabel(box) {
+  if (/europool/i.test(box || "")) return "EuroPool kasse " + box.replace(/europool\s*/i, "");
+  return box || "Kasse";
+}
+
+function produceLabel(p) {
+  const u = Number(p.unitsPerBox) || "";
+  const pack = p.packing || "";
+  const name = p.product || "";
+  return `${u} x ${pack} ${name}, origin ${p.origin || ""}`.replace(/\s+/g, " ").trim();
+}
+
+function emptyLine() {
   return {
-    id: crypto.randomUUID(),
-    lineNo: (idx + 1) * 1,
-    productNo: String(p.productCode),
-    productName: p.product,
-    quantity: Number(p.boxes),
-    unit: "krt",
+    id: uid(),
+    productNo: "",
+    productName: "",
+    quantity: "",
+    unit: "",
     unitPrice: 0,
     discount: 0,
-    department: "Packing",
-    box: p.box,
-    packing: p.packing,
-    pallet: p.pallet,
-    unitsPerBox: p.unitsPerBox,
-    boxesPerPallet: p.boxesPerPallet,
-    ean: p.ean,
-    gtin: p.gtin,
-    lot: p.lot,
-    origin: p.origin,
-    sscc: p.sscc,
-    bbd: fmtDate(p.bbd),
-    netKg: p.netKg,
-    description: p.description,
-    packingOrder: p.orderNo
+    department: ""
+  };
+}
+
+function linesFromPacking(p) {
+  const qty = Number(p.boxes) || 0;
+  return [
+    {
+      id: uid(),
+      productNo: p.packingCode || p.box,
+      productName: boxLabel(p.box),
+      quantity: qty,
+      unit: "Kasser",
+      unitPrice: 0,
+      discount: 0,
+      department: ""
+    },
+    {
+      id: uid(),
+      productNo: p.ean || p.gtin || p.productCode,
+      productName: produceLabel(p),
+      quantity: qty,
+      unit: "Box",
+      unitPrice: 0,
+      discount: 0,
+      department: ""
+    }
+  ];
+}
+
+function saleFromPackingRows(rows) {
+  const first = rows[0];
+  return {
+    id: uid(),
+    number: first.orderNo,
+    customerId: first.customerId,
+    customerNo: first.customerNo,
+    customerName: first.customerName,
+    customerAddress: first.delivery,
+    deliveryName: first.customerName,
+    delivery: first.delivery,
+    paymentTerms: "Netto 30 dage",
+    date: fmtDate(first.orderDate),
+    deliveryDate: fmtDate(first.deliveryDate),
+    heading: "",
+    text1: first.customerRef,
+    text2: first.gtin || first.ean,
+    externalId: "",
+    yourRef: "",
+    ourRef: "",
+    ourRef2: "",
+    otherRef: rows.map((r) => r.orderNo).join(", "),
+    layout: "",
+    currency: "DKK",
+    lines: rows.flatMap(linesFromPacking)
   };
 }
 
@@ -110,29 +165,7 @@ function salesFromPacking(packing) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(p);
   });
-  const sales = [];
-  groups.forEach((rows) => {
-    const first = rows[0];
-    sales.push({
-      id: crypto.randomUUID(),
-      number: "S-" + first.orderNo,
-      customerId: first.customerId,
-      customerNo: first.customerNo,
-      customerName: first.customerName,
-      delivery: first.delivery,
-      paymentTerms: "Netto 14 dage",
-      date: fmtDate(first.orderDate),
-      deliveryDate: fmtDate(first.deliveryDate),
-      yourRef: first.customerRef,
-      ourRef: first.internalRef && first.internalRef !== "0" ? first.internalRef : first.orderNo,
-      otherRef: rows.map((r) => r.orderNo).join(", "),
-      heading: "Sales order",
-      layout: "Order",
-      currency: "DKK",
-      lines: rows.map(lineFromPacking)
-    });
-  });
-  return sales;
+  return [...groups.values()].map(saleFromPackingRows);
 }
 
 function defaultState() {
@@ -257,23 +290,50 @@ document.querySelectorAll(".nav button").forEach((b) => {
 
 function blankSale() {
   return {
-    id: crypto.randomUUID(),
-    number: "S-NEW",
+    id: uid(),
+    number: "",
+    isNew: true,
     customerId: "",
     customerNo: "",
     customerName: "",
+    customerAddress: "",
+    deliveryName: "",
     delivery: "",
-    paymentTerms: "Netto 14 dage",
-    date: new Date().toISOString().slice(0, 10),
+    paymentTerms: "",
+    date: "",
     deliveryDate: "",
+    heading: "",
+    text1: "",
+    text2: "",
+    externalId: "",
     yourRef: "",
     ourRef: "",
+    ourRef2: "",
     otherRef: "",
-    heading: "Sales order",
-    layout: "Order",
+    layout: "",
     currency: "DKK",
     lines: []
   };
+}
+
+function daDate(iso) {
+  if (!iso) return "";
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  return `${m[3]}.${m[2]}.${m[1].slice(2)}`;
+}
+
+function persistSale(sale) {
+  if (!sale) return;
+  if (!sale.number) {
+    const nums = state.sales.map((s) => parseInt(s.number, 10)).filter((n) => n > 0);
+    sale.number = String((nums.length ? Math.max(...nums) : 28000) + 1);
+  }
+  sale.isNew = false;
+  const i = state.sales.findIndex((x) => x.id === sale.id);
+  if (i >= 0) state.sales[i] = sale;
+  else state.sales.unshift(sale);
+  save();
 }
 
 function esc(s) {
@@ -287,7 +347,9 @@ function esc(s) {
 function render() {
   const titles = {
     orders: "Sales orders",
-    editor: "Order",
+    editor: state.activeSale && state.activeSale.number && !state.activeSale.isNew
+      ? "Order no. " + state.activeSale.number
+      : "Order",
     catalog: "Clients, products & boxes",
     packing: "Packing source"
   };
@@ -336,12 +398,20 @@ function renderEditor() {
   const s = state.activeSale;
   if (!s) return "<p>No order selected.</p>";
   const t = saleTotals(s);
-  const cust = s.customerName
-    ? `<button class="cust-btn filled" id="pickCust"><strong>${esc(s.customerName)}</strong><small>No. ${esc(s.customerNo)} · ID ${esc(s.customerId)}</small></button>`
-    : `<button class="cust-btn" id="pickCust">Add customer</button>`;
+  const filled = Boolean(s.customerName);
+  const title = s.number && !s.isNew ? `Order no. ${esc(s.number)}` : "Order";
+  const cust = filled
+    ? `<div class="cust-no">Customer no. ${esc(s.customerNo)} <span class="pencil">👍</span></div>
+       <div class="cust-name" id="pickCust" style="cursor:pointer">${esc(s.customerName)}</div>
+       <div class="cust-addr"><textarea id="fAddr" rows="2">${esc(s.customerAddress || s.delivery)}</textarea></div>`
+    : `<button class="cust-add" id="pickCust">Add customer</button>`;
+  const terms = s.paymentTerms || "";
+  const dateShown = daDate(s.date);
+  const delivDate = daDate(s.deliveryDate);
   const lineRows = s.lines
     .map(
       (l, i) => `<tr data-line="${l.id}">
+        <td><input type="checkbox" /></td>
         <td>${i + 1}</td>
         <td><input data-f="productNo" value="${esc(l.productNo)}" /></td>
         <td><input data-f="productName" value="${esc(l.productName)}" /></td>
@@ -351,65 +421,90 @@ function renderEditor() {
         <td class="num"><input data-f="discount" type="number" step="0.01" value="${esc(l.discount)}" /></td>
         <td class="num">${money(lineTotal(l))}</td>
         <td><input data-f="department" value="${esc(l.department)}" /></td>
-        <td><button class="icon-del" data-del="${l.id}" title="Remove">✕</button></td>
-      </tr>
-      <tr>
-        <td></td>
-        <td colspan="9" style="color:#5c675f;font-size:12px;padding-top:0">
-          Box ${esc(l.box)} · ${esc(l.packing)} · ${esc(l.unitsPerBox)} units/box · Pallet ${esc(l.pallet)} (${esc(l.boxesPerPallet)}/plt)
-          · EAN ${esc(l.ean)} · Lot ${esc(l.lot)} · Origin ${esc(l.origin)} · SSCC ${esc(l.sscc)} · BBD ${esc(l.bbd)} · ${esc(l.netKg)} kg
-          · Packing order ${esc(l.packingOrder)}
-        </td>
       </tr>`
     )
     .join("");
-  const chips = [
-    s.delivery && `Delivery: ${s.delivery}`,
-    `${s.lines.reduce((n, l) => n + Number(l.quantity || 0), 0)} cartons`,
-    `${s.lines.reduce((n, l) => n + Number(l.netKg || 0), 0)} kg net`
-  ]
-    .filter(Boolean)
-    .map((c) => `<span class="chip">${esc(c)}</span>`)
-    .join("");
   return `
-    <div class="eco">
-      <div class="eco-head">
-        <div class="eco-col">
+    <div class="eco-page">
+      <div class="eco-top">
+        <h1>${title}</h1>
+        <div class="eco-balance">Balance incl. current amount<b>${filled ? money(t.total) : ""}</b></div>
+      </div>
+      <div class="eco-grid">
+        <div>
           ${cust}
-          <div class="meta-row">
-            <div><label>Payment terms</label><input id="fTerms" value="${esc(s.paymentTerms)}" /></div>
-            <div><label>Date</label><input id="fDate" type="date" value="${esc(s.date)}" /></div>
+          <div class="pair">
+            <div>
+              <div class="lbl">Payment terms</div>
+              <div class="val ${terms ? "" : "ph"}"><input id="fTerms" placeholder="" value="${esc(terms)}" /></div>
+            </div>
+            <div>
+              <div class="lbl">Date</div>
+              <div class="val ${s.date ? "" : "ph"}"><input id="fDate" type="date" value="${esc(s.date)}" /></div>
+            </div>
           </div>
-          <div class="meta-row">
-            <div style="flex:1"><label>Delivery</label>
-              <input id="fDeliv" style="width:100%" value="${esc(s.delivery)}" /></div>
+          <div style="margin-top:16px">
+            <div class="lbl">Delivery</div>
+            ${
+              filled
+                ? `<div class="val"><input id="fDelName" value="${esc(s.deliveryName || s.customerName)}" /></div>
+                   <div class="val"><input id="fDeliv" value="${esc(s.delivery)}" /></div>
+                   <div class="val ${s.deliveryDate ? "" : "ph"}"><input id="fDelDate" type="date" value="${esc(s.deliveryDate)}" /></div>`
+                : `<div class="val ph">Address</div>
+                   <div class="val ph">Delivery terms and date</div>
+                   <input id="fDelName" type="hidden" />
+                   <input id="fDeliv" type="hidden" />
+                   <input id="fDelDate" type="hidden" />`
+            }
           </div>
         </div>
-        <div class="eco-col notes">
-          <strong>Notes and references</strong>
-          <div class="row"><label>Heading</label><input id="fHead" value="${esc(s.heading)}" /></div>
-          <div class="row"><label>Your ref.</label><input id="fYref" value="${esc(s.yourRef)}" /></div>
-          <div class="row"><label>Our ref.</label><input id="fOref" value="${esc(s.ourRef)}" /></div>
-          <div class="row"><label>Other ref.</label><input id="fXref" value="${esc(s.otherRef)}" /></div>
-          <div class="row"><label>Layout</label><input id="fLay" value="${esc(s.layout)}" /></div>
+        <div class="notes">
+          <div class="notes-title">Notes and references</div>
+          ${[
+            ["Heading", "fHead", s.heading],
+            ["Text 1", "fT1", s.text1],
+            ["Text 2", "fT2", s.text2],
+            ["External Id", "fExt", s.externalId],
+            ["Your ref.", "fYref", s.yourRef],
+            ["Our ref.", "fOref", s.ourRef],
+            ["Our ref. 2", "fOref2", s.ourRef2],
+            ["Other ref.", "fXref", s.otherRef]
+          ]
+            .map(
+              ([lab, id, val]) =>
+                `<div class="nrow"><span>${lab}</span><input id="${id}" value="${esc(val)}" /></div>`
+            )
+            .join("")}
+          <div class="attach">Attached documents</div>
         </div>
-        <div class="eco-col totals">
-          <div class="preview" id="btnPrint">Show order</div>
-          <div class="row"><span>Subtotal</span><span>${money(t.sub)}</span></div>
-          <div class="row"><span>VAT (25%)</span><span>${money(t.vat)}</span></div>
-          <div class="row grand"><span>Total <span class="dkk">${esc(s.currency)}</span></span><span>${money(t.total)}</span></div>
+        <div>
+          <div class="eco-right">
+            <div class="show-order" id="btnPrint"><span>🔍 Show order</span></div>
+            <div class="totals">
+              <div class="trow"><span>Subtotal</span><span>${money(t.sub)}</span></div>
+              <div class="trow"><span>VAT</span><span>${money(t.vat)}</span></div>
+              <div class="trow"><span>Margin</span><span>${money(t.sub)} (100%)</span></div>
+              <div class="total"><span>Total <span class="dkk">${esc(s.currency)}</span></span><span>${money(t.total)}</span></div>
+            </div>
+          </div>
+          <div class="layout-line">Layout: <input id="fLay" value="${esc(s.layout)}" placeholder="" /></div>
         </div>
       </div>
       <div class="eco-actions">
         <button class="btn primary" id="btnNewLine">New order line</button>
-        <button class="btn ghost" id="btnSave">Save locally</button>
-        <button class="btn" id="btnPdf">Print / PDF</button>
-        <span class="right">${s.lines.length} item(s) in total</span>
+        ${filled ? `<button class="btn" id="btnSend">Send order</button>` : ""}
+        <button class="btn" id="btnSave">Convert to invoice</button>
+        <button class="btn">More ▾</button>
+        <div class="right">
+          <button class="ico" id="btnPdf" title="Print">🖨</button>
+          <span>${s.lines.length} item(s) in total</span>
+        </div>
       </div>
-      <div class="table-wrap lines">
+      <div class="eco-lines">
         <table>
           <thead>
             <tr>
+              <th></th>
               <th>Line no.</th>
               <th>Product no.</th>
               <th>Product name</th>
@@ -419,13 +514,12 @@ function renderEditor() {
               <th>Discount (%)</th>
               <th>Total</th>
               <th>Afdeling</th>
-              <th></th>
             </tr>
           </thead>
-          <tbody>${lineRows || `<tr><td colspan="10" style="color:#888">No lines — choose New order line and pick from your product catalogue.</td></tr>`}</tbody>
+          <tbody>${lineRows}</tbody>
         </table>
+        <div class="line-foot">${s.lines.length} item(s) in total</div>
       </div>
-      <div class="pack-strip">${chips}</div>
     </div>`;
 }
 
@@ -499,16 +593,28 @@ function bindView() {
   if (view !== "editor" || !sale) return;
 
   const persistHead = () => {
-    sale.paymentTerms = document.getElementById("fTerms").value;
-    sale.date = document.getElementById("fDate").value;
-    sale.delivery = document.getElementById("fDeliv").value;
-    sale.heading = document.getElementById("fHead").value;
-    sale.yourRef = document.getElementById("fYref").value;
-    sale.ourRef = document.getElementById("fOref").value;
-    sale.otherRef = document.getElementById("fXref").value;
-    sale.layout = document.getElementById("fLay").value;
+    const g = (id) => document.getElementById(id)?.value ?? "";
+    sale.paymentTerms = g("fTerms");
+    sale.date = g("fDate");
+    sale.customerAddress = g("fAddr") || sale.customerAddress;
+    sale.deliveryName = g("fDelName") || sale.deliveryName;
+    sale.delivery = g("fDeliv") || sale.delivery;
+    sale.deliveryDate = g("fDelDate") || sale.deliveryDate;
+    sale.heading = g("fHead");
+    sale.text1 = g("fT1");
+    sale.text2 = g("fT2");
+    sale.externalId = g("fExt");
+    sale.yourRef = g("fYref");
+    sale.ourRef = g("fOref");
+    sale.ourRef2 = g("fOref2");
+    sale.otherRef = g("fXref");
+    sale.layout = g("fLay");
+    if (!sale.isNew) persistSale(sale);
   };
-  ["fTerms", "fDate", "fDeliv", "fHead", "fYref", "fOref", "fXref", "fLay"].forEach((id) => {
+  [
+    "fTerms", "fDate", "fAddr", "fDelName", "fDeliv", "fDelDate",
+    "fHead", "fT1", "fT2", "fExt", "fYref", "fOref", "fOref2", "fXref", "fLay"
+  ].forEach((id) => {
     const n = document.getElementById(id);
     if (n) n.addEventListener("change", persistHead);
   });
@@ -518,27 +624,27 @@ function bindView() {
       const line = sale.lines.find((l) => l.id === id);
       const f = inp.dataset.f;
       line[f] = inp.type === "number" ? Number(inp.value) : inp.value;
-      save();
+      if (!sale.isNew) persistSale(sale);
       render();
     });
   });
   document.querySelectorAll("[data-del]").forEach((b) => {
     b.addEventListener("click", () => {
-      sale.lines = sale.lines.filter((l) => l.id !== b.dataset.del);
-      save();
-      render();
+    sale.lines = sale.lines.filter((l) => l.id !== b.dataset.del);
+    if (!sale.isNew) persistSale(sale);
+    render();
     });
   });
   document.getElementById("pickCust")?.addEventListener("click", pickCustomer);
   document.getElementById("btnNewLine")?.addEventListener("click", pickProduct);
-  document.getElementById("btnSave")?.addEventListener("click", () => {
+  const saveNow = () => {
     persistHead();
-    const i = state.sales.findIndex((x) => x.id === sale.id);
-    if (i >= 0) state.sales[i] = sale;
-    else state.sales.unshift(sale);
-    save();
-    toast("Saved on this PC only");
-  });
+    persistSale(sale);
+    toast("Saved on this PC");
+    render();
+  };
+  document.getElementById("btnSave")?.addEventListener("click", saveNow);
+  document.getElementById("btnSend")?.addEventListener("click", saveNow);
   document.getElementById("btnPrint")?.addEventListener("click", () => window.print());
   document.getElementById("btnPdf")?.addEventListener("click", () => window.print());
 }
@@ -572,7 +678,11 @@ function pickCustomer() {
               customerId: c.id,
               customerNo: c.no,
               customerName: c.name,
-              delivery: c.delivery
+              customerAddress: c.delivery,
+              deliveryName: c.name,
+              delivery: c.delivery,
+              paymentTerms: state.activeSale.paymentTerms || "Netto 30 dage",
+              date: state.activeSale.date || new Date().toISOString().slice(0, 10)
             });
             bg.classList.remove("on");
             render();
@@ -608,31 +718,28 @@ function pickProduct() {
               (x) => x.code === tr.dataset.code && x.ean === tr.dataset.ean && x.box === tr.dataset.box
             );
             const sale = state.activeSale;
+            const qty = p.boxesPerPallet || 1;
             sale.lines.push({
-              id: crypto.randomUUID(),
-              lineNo: sale.lines.length + 1,
-              productNo: p.code,
-              productName: p.name,
-              quantity: p.boxesPerPallet || 1,
-              unit: p.unit,
+              id: uid(),
+              productNo: p.packingCode || p.box,
+              productName: boxLabel(p.box),
+              quantity: qty,
+              unit: "Kasser",
               unitPrice: 0,
               discount: 0,
-              department: "Packing",
-              box: p.box,
-              packing: p.packing,
-              pallet: p.pallet,
-              unitsPerBox: p.unitsPerBox,
-              boxesPerPallet: p.boxesPerPallet,
-              ean: p.ean,
-              gtin: p.gtin,
-              lot: "",
-              origin: p.origin,
-              sscc: "",
-              bbd: "",
-              netKg: "",
-              description: p.description,
-              packingOrder: ""
+              department: ""
             });
+            sale.lines.push({
+              id: uid(),
+              productNo: p.ean || p.code,
+              productName: produceLabel(p),
+              quantity: qty,
+              unit: "Box",
+              unitPrice: 0,
+              discount: 0,
+              department: ""
+            });
+            if (!sale.isNew) persistSale(sale);
             bg.classList.remove("on");
             render();
           };
