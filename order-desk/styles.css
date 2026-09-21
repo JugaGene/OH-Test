@@ -107,8 +107,40 @@ button.btn {
   cursor: pointer;
   font-size: 13px;
 }
-button.btn.primary { background: var(--blue-btn); border-color: #6b9ad4; color: #fff; }
-button.btn.ghost { background: #fff; }
+button.btn.save { background: #1f6b45; border-color: #1f6b45; color: #fff; }
+
+.sheet-wrap { background: #fff; }
+.sheet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 4px 0 10px;
+  font-size: 13px;
+}
+.sheet-head span { color: #888; }
+.sheet {
+  overflow: auto;
+  max-height: calc(100vh - 160px);
+  border: 1px solid #b4b4b4;
+}
+.sheet table { border-collapse: collapse; font-size: 11px; }
+.sheet th {
+  position: sticky;
+  top: 0;
+  background: #548235;
+  color: #fff;
+  font-weight: 600;
+  padding: 6px 8px;
+  border: 1px solid #3f6b28;
+  white-space: nowrap;
+}
+.sheet td {
+  padding: 4px 8px;
+  border: 1px solid #d0d0d0;
+  white-space: nowrap;
+}
+.station-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.lab-cop { border: 1px solid #ccc; padding: 2px 4px; }
 
 .content { padding: 12px 20px 40px; background: #fff; }
 
