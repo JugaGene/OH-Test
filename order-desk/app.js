@@ -1231,21 +1231,31 @@ function barcodeHtml(text) {
 }
 
 function openPrint(inner, kind) {
-  const w = window.open("", "_blank", "noopener,width=900,height=1000");
-  if (!w) {
-    toast("Allow pop-ups to print");
-    return;
-  }
-  w.document.write(`<!DOCTYPE html><html><head><title>Print</title>
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Print</title>
     <style>
       body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; color: #111; }
       ${kind === "label" ? labelPrintCss() : orderPrintCss()}
-    </style></head><body class="${kind}">${inner}</body></html>`);
-  w.document.close();
+    </style></head><body class="${kind}">${inner}</body></html>`;
+  let frame = document.getElementById("printFrame");
+  if (!frame) {
+    frame = document.createElement("iframe");
+    frame.id = "printFrame";
+    frame.setAttribute("aria-hidden", "true");
+    frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+    document.body.appendChild(frame);
+  }
+  const doc = frame.contentWindow && frame.contentWindow.document;
+  if (!doc) {
+    toast("Could not open the print view");
+    return;
+  }
+  doc.open();
+  doc.write(html);
+  doc.close();
   setTimeout(() => {
-    w.focus();
-    w.print();
-  }, 250);
+    frame.contentWindow.focus();
+    frame.contentWindow.print();
+  }, 400);
 }
 
 function labelPrintCss() {
