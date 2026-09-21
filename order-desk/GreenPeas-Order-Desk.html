@@ -115,8 +115,40 @@ button.btn {
   cursor: pointer;
   font-size: 13px;
 }
-button.btn.primary { background: var(--blue-btn); border-color: #6b9ad4; color: #fff; }
-button.btn.ghost { background: #fff; }
+button.btn.save { background: #1f6b45; border-color: #1f6b45; color: #fff; }
+
+.sheet-wrap { background: #fff; }
+.sheet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 4px 0 10px;
+  font-size: 13px;
+}
+.sheet-head span { color: #888; }
+.sheet {
+  overflow: auto;
+  max-height: calc(100vh - 160px);
+  border: 1px solid #b4b4b4;
+}
+.sheet table { border-collapse: collapse; font-size: 11px; }
+.sheet th {
+  position: sticky;
+  top: 0;
+  background: #548235;
+  color: #fff;
+  font-weight: 600;
+  padding: 6px 8px;
+  border: 1px solid #3f6b28;
+  white-space: nowrap;
+}
+.sheet td {
+  padding: 4px 8px;
+  border: 1px solid #d0d0d0;
+  white-space: nowrap;
+}
+.sheet tr.saved-row td { background: #e2efda; }
+.sheet tr:hover td { background: #fff2cc; }
 
 .content { padding: 12px 20px 40px; background: #fff; }
 
@@ -352,7 +384,7 @@ tr.clickable:hover { background: #f6f9fc; }
         <button data-view="orders" class="active">Sales orders</button>
         <button data-view="new">New order</button>
         <button data-view="catalog">Clients, products, boxes</button>
-        <button data-view="packing">Packing source</button>
+        <button data-view="packing">Excel overview</button>
       </nav>
       <div class="side-foot">This file stays on your computer.<br />Data is stored in this browser.</div>
     </aside>
@@ -800,14 +832,14 @@ function render() {
       ? "Order no. " + state.activeSale.number
       : "Order",
     catalog: "Clients, products & boxes",
-    packing: "Packing source"
+    packing: "Excel overview"
   };
   document.getElementById("title").textContent = titles[view] || "Order";
   const el = document.getElementById("content");
   if (view === "orders") el.innerHTML = renderList();
   else if (view === "editor") el.innerHTML = renderEditor();
   else if (view === "catalog") el.innerHTML = renderCatalog();
-  else el.innerHTML = renderPacking();
+  else el.innerHTML = renderOverview();
   bindView();
 }
 
@@ -942,6 +974,7 @@ function renderEditor() {
       </div>
       <div class="eco-actions">
         <button class="btn primary" id="btnNewLine">New order line</button>
+        <button class="btn save" id="btnKeep">Save</button>
         ${filled ? `<button class="btn" id="btnSend">Send order</button>` : ""}
         <button class="btn" id="btnSave">Convert to invoice</button>
         <button class="btn">More ▾</button>
@@ -1040,23 +1073,149 @@ function renderCatalog() {
     </div>`;
 }
 
-function renderPacking() {
-  const rows = state.packing
-    .map(
-      (p) => `<tr>
-        <td>${esc(p.orderNo)}</td><td>${esc(p.customerName)}</td><td>${esc(p.product)}</td>
-        <td>${esc(p.boxes)}</td><td>${esc(p.box)}</td><td>${esc(p.packing)}</td>
-        <td>${esc(p.pallet)}</td><td>${esc(p.lot)}</td>
-      </tr>`
-    )
+function saleToExcelRows(sale) {
+  const rows = [];
+  const lines = sale.lines || [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const next = lines[i + 1];
+    let crate = null;
+    let prod = null;
+    if (l.unit === "Kasser" && next && next.unit === "Box") {
+      crate = l;
+      prod = next;
+      i += 1;
+    } else if (l.unit === "Box") prod = l;
+    else crate = l;
+    const qty = Number((crate || prod).quantity) || 0;
+    const bpp = Number((crate || prod).boxesPerPallet) || 0;
+    const units = Number((prod || crate || {}).unitsPerBox) || "";
+    rows.push({
+      source: "Saved",
+      orderNo: sale.number,
+      customerName: sale.customerName,
+      boxes: qty,
+      floorPallets: bpp ? 1 : "",
+      totalPallets: bpp ? Math.ceil(qty / bpp) : "",
+      pallet: (crate || prod).pallet || "",
+      boxesPerPallet: bpp || "",
+      box: (crate || prod).boxName || (crate && crate.productName) || "",
+      unitsPerBox: units,
+      packing: (prod || {}).packingName || "",
+      packingCode: (crate || prod).packingCode || "",
+      product: (prod || {}).productNameRaw || (prod && prod.productName) || "",
+      productCode: (prod || {}).productCode || "",
+      origin: (prod || crate || {}).origin || "",
+      ean: (prod && prod.productNo) || "",
+      customerNo: sale.customerNo,
+      customerId: sale.customerId,
+      customerRef: sale.text1 || sale.yourRef,
+      internalRef: sale.ourRef,
+      orderDate: sale.date,
+      deliveryDate: sale.deliveryDate,
+      delivery: sale.delivery,
+      address: sale.customerAddress,
+      lot: "",
+      netKg: "",
+      description: prod ? prod.productName : (crate && crate.productName) || ""
+    });
+  }
+  return rows;
+}
+
+function packingToExcelRow(p) {
+  return {
+    source: "Excel",
+    orderNo: p.orderNo,
+    customerName: p.customerName,
+    boxes: p.boxes,
+    floorPallets: p.floorPallets,
+    totalPallets: p.totalPallets,
+    pallet: p.pallet,
+    boxesPerPallet: p.boxesPerPallet,
+    box: p.box,
+    unitsPerBox: p.unitsPerBox,
+    packing: p.packing,
+    packingCode: p.packingCode,
+    product: p.product,
+    productCode: p.productCode,
+    origin: p.origin,
+    ean: p.ean,
+    customerNo: p.customerNo,
+    customerId: p.customerId,
+    customerRef: p.customerRef,
+    internalRef: p.internalRef,
+    orderDate: p.orderDate,
+    deliveryDate: p.deliveryDate,
+    delivery: p.delivery,
+    address: p.address,
+    lot: p.lot,
+    netKg: p.netKg,
+    description: p.description
+  };
+}
+
+function allExcelRows() {
+  const saved = (state.sales || []).flatMap(saleToExcelRows);
+  const imported = (state.packing || []).map(packingToExcelRow);
+  return saved.concat(imported);
+}
+
+function renderOverview() {
+  const cols = [
+    ["source", "Source"],
+    ["orderNo", "Order no."],
+    ["customerName", "Customer name"],
+    ["customerNo", "Customer no."],
+    ["customerId", "Customer ID"],
+    ["boxes", "No of boxes"],
+    ["floorPallets", "Floor pallets"],
+    ["totalPallets", "Total pallets"],
+    ["pallet", "Pallet name"],
+    ["boxesPerPallet", "Boxes per pallet"],
+    ["box", "Box name"],
+    ["unitsPerBox", "Units per box"],
+    ["packing", "Packing name"],
+    ["packingCode", "Packing code"],
+    ["product", "Product name"],
+    ["productCode", "Product code"],
+    ["origin", "Origin"],
+    ["ean", "EAN"],
+    ["lot", "Lot no."],
+    ["orderDate", "Order date"],
+    ["deliveryDate", "Delivery date"],
+    ["customerRef", "Customer reference"],
+    ["internalRef", "Internal reference"],
+    ["delivery", "Delivery address"],
+    ["address", "Address"],
+    ["netKg", "Net weight in Kg"],
+    ["description", "Final description"]
+  ];
+  const data = allExcelRows();
+  const body = data
+    .map((r) => {
+      const cls = r.source === "Saved" ? "saved-row" : "";
+      return `<tr class="${cls}">${cols
+        .map(([k]) => `<td>${esc(r[k] ?? "")}</td>`)
+        .join("")}</tr>`;
+    })
     .join("");
-  return `<div class="card"><h3>Source packing orders</h3>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Boxes</th><th>Box</th><th>Packing</th><th>Pallet</th><th>Lot</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>
-    <p class="hint">Historical packing combinations only. Do not use this as a locked recipe — pick customer, box, packing and product separately on the order.</p>
-  </div>`;
+  return `
+    <div class="sheet-wrap">
+      <div class="sheet-head">
+        <strong>Order handling overview</strong>
+        <span>${data.filter((r) => r.source === "Saved").length} saved · ${
+          data.filter((r) => r.source === "Excel").length
+        } from Excel</span>
+      </div>
+      <div class="sheet">
+        <table>
+          <thead><tr>${cols.map(([, lab]) => `<th>${lab}</th>`).join("")}</tr></thead>
+          <tbody>${body || `<tr><td colspan="${cols.length}">No rows yet — save an order.</td></tr>`}</tbody>
+        </table>
+      </div>
+      <p class="hint">Saved e-conomic orders appear here in the same columns as the Excel file, plus the original imported rows.</p>
+    </div>`;
 }
 
 function bindView() {
@@ -1122,6 +1281,15 @@ function bindView() {
     toast("Saved on this PC");
     render();
   };
+  const saveAndList = () => {
+    persistHead();
+    persistSale(sale);
+    toast("Saved — shown in Sales orders and Overview");
+    view = "orders";
+    document.querySelectorAll(".nav button").forEach((x) => x.classList.toggle("active", x.dataset.view === "orders"));
+    render();
+  };
+  document.getElementById("btnKeep")?.addEventListener("click", saveAndList);
   document.getElementById("btnSave")?.addEventListener("click", saveNow);
   document.getElementById("btnSend")?.addEventListener("click", saveNow);
   document.getElementById("btnPrint")?.addEventListener("click", () => window.print());
@@ -1217,6 +1385,9 @@ function pickProduct() {
        <label>Pallet
          <select id="cPal"><option value="">—</option>${pallets.map((o) => `<option>${esc(o)}</option>`).join("")}</select>
        </label>
+       <label>Boxes per pallet
+         <input id="cBpp" type="number" step="1" value="" />
+       </label>
        <label>Units per box
          <input id="cUnits" type="number" step="1" value="10" />
        </label>
@@ -1235,6 +1406,8 @@ function pickProduct() {
         const prodCode = bg.querySelector("#cProd").value;
         const packName = bg.querySelector("#cPack").value;
         const origin = bg.querySelector("#cOrig").value;
+        const pallet = bg.querySelector("#cPal").value;
+        const bpp = Number(bg.querySelector("#cBpp").value) || 0;
         const units = Number(bg.querySelector("#cUnits").value) || 0;
         const qty = Number(bg.querySelector("#cQty").value) || 0;
         const ean = bg.querySelector("#cEan").value;
@@ -1254,7 +1427,11 @@ function pickProduct() {
             unit: "Kasser",
             unitPrice: 0,
             discount: 0,
-            department: ""
+            department: "",
+            boxName,
+            packingCode: packing ? packing.code : "",
+            pallet,
+            boxesPerPallet: bpp
           });
         }
         if (kind === "product" || kind === "both") {
@@ -1270,7 +1447,16 @@ function pickProduct() {
             unit: "Box",
             unitPrice: 0,
             discount: 0,
-            department: ""
+            department: "",
+            boxName,
+            packingName: packName,
+            packingCode: packing ? packing.code : "",
+            productNameRaw: product.name,
+            productCode: product.code,
+            origin,
+            unitsPerBox: units,
+            pallet,
+            boxesPerPallet: bpp
           });
         }
         if (!sale.isNew) persistSale(sale);
