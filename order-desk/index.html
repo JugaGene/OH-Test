@@ -388,7 +388,7 @@ tr.clickable:hover { background: #f6f9fc; }
         <button data-view="labels">Pallet labels</button>
         <button data-view="settings">Settings &amp; e-conomic</button>
       </nav>
-      <div class="side-foot">Local PC only. Pallet labels print from sales lines. Optional Visma e-conomic via server.py.</div>
+      <div class="side-foot">Local PC only.</div>
     </aside>
     <section class="main">
       <header class="topbar">
@@ -489,6 +489,80 @@ window.GP_SEED = {
     }
   ]
 };
+
+/* GS1-128 + GreenPeas Pallet label 2026 layouts (A4). */
+(function (w) {
+  const W = [
+    "212222","222122","222221","121223","121322","131222","122213","122312","132212","221213",
+    "221312","231212","112232","122132","122231","113222","123122","123221","223211","221132",
+    "221231","213212","223112","312131","311222","321122","321221","312212","322112","322211",
+    "212123","212321","232121","111323","131123","131321","112313","132113","132311","211313",
+    "231113","231311","112133","112331","132131","113123","113321","133121","313121","211331",
+    "231131","213113","213311","213131","311123","311321","331121","312113","312311","332111",
+    "314111","221411","431111","111224","111422","121124","121421","141122","141221","112214",
+    "112412","122114","122411","142112","142211","241211","221114","413111","241112","134111",
+    "111242","121142","121241","114212","124112","124211","411212","421112","421211","212141",
+    "214121","412121","111143","111341","131141","114113","114311","411113","411311","113141",
+    "114131","311141","411131","211412","211214","211232","2331112"
+  ];
+
+  function barsSvg(values, h) {
+    let x = 0;
+    const m = 1.15;
+    let r = "";
+    values.forEach((code) => {
+      const pat = W[code] || W[0];
+      [...pat].forEach((ch, i) => {
+        const ww = Number(ch) * m;
+        if (i % 2 === 0) r += `<rect x="${x.toFixed(2)}" width="${ww}" height="${h}"/>`;
+        x += ww;
+      });
+    });
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${(x + 2).toFixed(1)}" height="${h}" viewBox="0 0 ${x} ${h}">${r}</svg>`;
+  }
+
+  function encode128(values, start) {
+    const seq = [start, ...values];
+    let sum = start;
+    values.forEach((v, i) => {
+      sum += v * (i + 1);
+    });
+    seq.push(sum % 103);
+    seq.push(106);
+    return seq;
+  }
+
+  function encodeCodeC(digitStr) {
+    const d = String(digitStr).replace(/\D/g, "");
+    const vals = [102];
+    const even = d.length % 2 ? "0" + d : d;
+    for (let i = 0; i < even.length; i += 2) vals.push(Number(even.slice(i, i + 2)));
+    return encode128(vals, 105);
+  }
+
+  function encodeCodeB(text) {
+    const vals = [102];
+    [...String(text)].forEach((ch) => {
+      const c = ch.charCodeAt(0);
+      if (c >= 32 && c <= 127) vals.push(c - 32);
+    });
+    return encode128(vals, 104);
+  }
+
+  w.gpBarcodeGs1 = function (human, height) {
+    const parts = String(human).match(/\(\d+\)[^(]*/g) || [human];
+    const vals = [102];
+    parts.forEach((part, idx) => {
+      if (idx) vals.push(102);
+      const d = part.replace(/[()]/g, "").replace(/\D/g, "");
+      const even = d.length % 2 ? "0" + d : d;
+      for (let i = 0; i < even.length; i += 2) vals.push(Number(even.slice(i, i + 2)));
+    });
+    const hasLetter = /[A-Za-z]/.test(human);
+    const seq = hasLetter ? encodeCodeB(human.replace(/[()]/g, "")) : encode128(vals, 105);
+    return `<div class="gs1">${barsSvg(seq, height || 62)}<div class="hr">${human}</div></div>`;
+  };
+})(window);
 
 const STORE = "gp.orderdesk.v3";
 const PIN_KEY = "gp.orderdesk.pin";
@@ -1120,6 +1194,8 @@ function saleToExcelRows(sale) {
       ean: (prod && prod.productNo) || "",
       gtin: (prod || {}).gtin || (prod && prod.productNo) || "",
       lot: (prod || crate || {}).lot || "",
+      dessin: (prod || crate || {}).dessin || "",
+      bbd: (prod || crate || {}).bbd || "",
       headline: `${qty} x ${units || ""} ${(prod || {}).productNameRaw || ""} ${(prod || {}).packingName || ""}`.replace(/\s+/g, " ").trim(),
       customerNo: sale.customerNo,
       customerId: sale.customerId,
@@ -1156,6 +1232,9 @@ function packingToExcelRow(p) {
     ean: p.ean,
     gtin: p.gtin || p.finalGtin,
     lot: p.lot,
+    dessin: p.dessin,
+    bbd: p.bbd,
+    gln: p.gln,
     headline: `${p.boxes} x ${p.unitsPerBox} ${p.product} ${p.packing}`,
     customerNo: p.customerNo,
     customerId: p.customerId,
@@ -1752,30 +1831,260 @@ function openPrint(inner, kind) {
 
 function labelPrintCss() {
   return `
-    @page { size: 100mm 150mm; margin: 6mm; }
-    .label { page-break-after: always; width: 88mm; min-height: 138mm; padding: 4mm; position: relative; }
-    .label:last-child { page-break-after: auto; }
-    .corners { display: grid; grid-template-columns: 1fr 1fr; gap: 8mm; margin-bottom: 8mm; }
-    .box h4 { margin: 0 0 4px; font-weight: 400; font-size: 11px; }
-    .box { border: 1.5px solid #111; padding: 6px 8px 10px; min-height: 22mm; position: relative; }
-    .box:before, .box:after { content: ""; position: absolute; width: 6px; height: 6px; border: 1.5px solid #111; }
-    .box:before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
-    .box:after { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
-    .name { font-weight: 700; font-size: 13px; }
-    .dn { text-align: center; margin: 6mm 0 3mm; }
-    .dn small { display: block; font-size: 11px; }
-    .dn b { font-size: 16px; letter-spacing: .02em; }
-    .line { text-align: center; margin-bottom: 6mm; font-size: 13px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5mm 4mm; font-size: 11px; }
-    .grid span { display: block; color: #444; font-size: 10px; }
-    .grid b { font-weight: 600; }
-    .bc { display: flex; align-items: stretch; height: 28px; justify-content: center; margin-top: 8mm; }
-    .bar { display: inline-block; height: 100%; background: #000; }
-    .bar.n { width: 1px; }
-    .bar.w { width: 3px; }
-    .bar.gap { width: 2px; background: transparent; }
-    .bc-text { text-align: center; font-size: 12px; margin-top: 2px; }
+    @page { size: A4; margin: 12mm 14mm; }
+    .page { page-break-after: always; width: 170mm; min-height: 250mm; color: #111; }
+    .page:last-child { page-break-after: auto; }
+    .frame {
+      border: 1.6px solid #111;
+      padding: 8px 12px 10px;
+      position: relative;
+      margin: 2px 0 8px;
+    }
+    .frame:before, .frame:after { content: ""; position: absolute; width: 10px; height: 10px; border: 1.6px solid #111; }
+    .frame:before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+    .frame:after { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
+    .cap { font-size: 11px; margin: 8px 0 2px; }
+    .from-row { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+    .from-row strong { font-size: 15px; }
+    .to-name { font-size: 15px; font-weight: 700; }
+    .to-addr { font-size: 13px; margin-top: 4px; }
+    hr.rule { border: 0; border-top: 1.6px solid #111; margin: 10px 0 14px; }
+    .dn { text-align: center; margin: 10px 0 6px; }
+    .dn .t { font-size: 18px; font-weight: 700; }
+    .dn .n { font-size: 20px; font-weight: 700; letter-spacing: .02em; }
+    .dn .sub { margin-top: 6px; font-size: 13px; }
+    .g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px 18px; font-size: 13px; margin: 12px 0; }
+    .g3 .k { font-weight: 700; }
+    .g3 .v { margin-top: 2px; }
+    .center-bc { text-align: center; margin-top: 18px; }
+    .gs1 { text-align: center; margin: 8px 0; }
+    .gs1 svg { display: block; margin: 0 auto; max-width: 150mm; }
+    .gs1 .hr { font-size: 11px; margin-top: 3px; letter-spacing: .02em; }
+    .meta2 { display: grid; grid-template-columns: 1.1fr 1fr; gap: 6px 24px; font-size: 13px; }
+    .meta2 .k { display: inline-block; min-width: 110px; font-weight: 500; }
+    .side-col { display: flex; align-items: center; gap: 8px; }
+    .vert { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 14px; font-weight: 600; }
+    .vert-r { writing-mode: vertical-rl; font-size: 13px; font-weight: 600; }
+    .bc-wrap { display: grid; grid-template-columns: 28px 1fr 28px; align-items: center; margin-top: 10px; }
+    .pl-title { font-size: 26px; font-weight: 700; text-align: center; margin: 0 0 12px; }
+    .pl-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+    .pl-box { border: 1.5px solid #111; padding: 10px 12px; margin-bottom: 14px; }
+    .pl-box h4 { margin: 0 0 8px; font-size: 13px; }
+    .pl-box .blank { min-height: 48px; border: 1px solid #ccc; }
+    .pl-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px 16px; font-size: 13px; }
+    .pl-grid b { font-weight: 600; }
+    .foot { display: flex; justify-content: space-between; margin-top: 24px; font-size: 12px; }
   `;
+}
+
+function addrFrames(row) {
+  const co = company();
+  return `
+    <div class="cap">From</div>
+    <div class="frame from-row"><strong>${esc(co.name)}</strong><span>${esc(co.address)}</span></div>
+    <div class="cap">To</div>
+    <div class="frame">
+      <div class="to-name">${esc(row.customerName)}</div>
+      <div class="to-addr">${esc(row.delivery)}</div>
+    </div>`;
+}
+
+function padGtin(g) {
+  const d = String(g || "").replace(/\D/g, "");
+  if (!d) return "";
+  return d.padStart(14, "0").slice(-14);
+}
+
+function gs1CheckDigit(numStr) {
+  const d = String(numStr).replace(/\D/g, "");
+  let sum = 0;
+  let mul = 3;
+  for (let i = d.length - 1; i >= 0; i--) {
+    sum += Number(d[i]) * mul;
+    mul = mul === 3 ? 1 : 3;
+  }
+  return String((10 - (sum % 10)) % 10);
+}
+
+function makeSscc(row, palletNo) {
+  const gln = String(row.gln || company().gln || "15712515").replace(/\D/g, "").slice(0, 8);
+  const order = String(row.orderNo || "0").replace(/\D/g, "").padStart(4, "0").slice(-4);
+  const serial = String(palletNo).padStart(2, "0");
+  const body = (gln + "250" + order + serial).slice(0, 17);
+  return body + gs1CheckDigit(body);
+}
+
+function enrichPacking(row) {
+  const r = { ...row };
+  const hit = (state.packing || []).find(
+    (p) =>
+      String(p.orderNo) === String(r.orderNo) ||
+      (p.product === r.product && p.box === r.box && p.customerName === r.customerName)
+  );
+  if (hit) {
+    r.gtin = r.gtin || hit.gtin || hit.finalGtin;
+    r.ean = r.ean || hit.ean;
+    r.dessin = r.dessin || hit.dessin;
+    r.lot = r.lot || hit.lot;
+    r.bbd = r.bbd || hit.bbd;
+    r.origin = r.origin || hit.origin;
+    r.boxesPerPallet = r.boxesPerPallet || hit.boxesPerPallet;
+    r.floorPallets = r.floorPallets || hit.floorPallets;
+    r.totalPallets = r.totalPallets || hit.totalPallets;
+    r.pallet = r.pallet || hit.pallet;
+    r.unitsPerBox = r.unitsPerBox || hit.unitsPerBox;
+    r.packing = r.packing || hit.packing;
+    r.box = r.box || hit.box;
+    r.netKg = r.netKg || hit.netKg;
+    r.gln = r.gln || hit.gln;
+    r.customerRef = r.customerRef || hit.customerRef;
+    r.delivery = r.delivery || hit.delivery;
+  }
+  return r;
+}
+
+function daComma(n) {
+  if (n === "" || n == null) return "";
+  return String(n).replace(".", ",");
+}
+
+function deliveryNoteHtml(row) {
+  const co = company();
+  const units = daComma(row.unitsPerBox);
+  const head = `${row.boxes} x ${units} ${row.product || ""} ${row.packing || ""}`.replace(/\s+/g, " ").trim();
+  const split = Number(row.totalPallets) || "";
+  const bc = typeof gpBarcodeGs1 === "function" ? gpBarcodeGs1(String(row.orderNo), 52) : "";
+  return `<article class="page">
+    ${addrFrames(row)}
+    <hr class="rule" />
+    <div class="dn">
+      <div class="t">Delivery note</div>
+      <div class="n">${esc(row.customerRef || row.orderNo)}</div>
+      <div class="sub">${esc(head)}</div>
+    </div>
+    <hr class="rule" />
+    <div class="g3">
+      <div><div class="k">Order date</div><div class="v">${esc(compactDate(row.orderDate))}</div></div>
+      <div><div class="k">Delivery date</div><div class="v">${esc(compactDate(row.deliveryDate))}</div></div>
+      <div><div class="k">Order number</div><div class="v">${esc(row.orderNo)}</div></div>
+      <div><div class="k">Dessin</div><div class="v">${esc(row.dessin)}</div></div>
+      <div><div class="k">Order reference</div><div class="v">${esc(row.customerRef)}</div></div>
+      <div><div class="k">Lot number</div><div class="v">${esc(row.lot)}</div></div>
+      <div><div class="k">Total boxes</div><div class="v">${esc(row.boxes)}</div></div>
+      <div><div class="k">Units per box</div><div class="v">${esc(units)}</div></div>
+      <div><div class="k">Product</div><div class="v">${esc(row.product)}</div></div>
+      <div><div class="k">Transport pallet</div><div class="v">${esc(row.floorPallets)}</div></div>
+      <div><div class="k">Split pallet</div><div class="v">${esc(split)}</div></div>
+      <div><div class="k">Pallet type</div><div class="v">${esc(row.pallet)}</div></div>
+      <div><div class="k">Contact details</div><div class="v">${esc(co.phone)}</div></div>
+      <div><div class="k">Origin</div><div class="v">${esc(row.origin)}</div></div>
+      <div><div class="k">Net weight Kg</div><div class="v">${esc(row.netKg)}</div></div>
+    </div>
+    <div class="center-bc">${bc}</div>
+  </article>`;
+}
+
+function gs1PalletHtml(row, palletNo, total) {
+  const gtin = padGtin(row.gtin || row.ean);
+  const per = Number(row.boxesPerPallet) || Number(row.boxes) || 0;
+  const units = daComma(row.unitsPerBox);
+  const bbd = compactDate(row.bbd || row.deliveryDate);
+  const gln13 = String(row.gln || company().gln || "15712515").replace(/\D/g, "").padEnd(13, "0").slice(0, 13);
+  const sscc = makeSscc(row, total - palletNo + 1);
+  const h1 = `(02)${gtin}(37)${per}(400)${row.customerRef || ""}`;
+  const h2 = `(412)${gln13}(15)${bbd}(10)${row.lot || ""}`;
+  const h3 = `(00)${sscc}`;
+  const desc = `${per} &nbsp; x ${units} ${esc(row.product)} ${esc(row.packing)}`;
+  const b1 = typeof gpBarcodeGs1 === "function" ? gpBarcodeGs1(h1, 58) : "";
+  const b2 = typeof gpBarcodeGs1 === "function" ? gpBarcodeGs1(h2, 58) : "";
+  const b3 = typeof gpBarcodeGs1 === "function" ? gpBarcodeGs1(h3, 58) : "";
+  return `<article class="page">
+    ${addrFrames(row)}
+    <hr class="rule" />
+    <div class="meta2">
+      <div><span class="k">Description</span> ${desc}</div>
+      <div></div>
+      <div><span class="k">Best before</span> ${esc(bbd)}</div>
+      <div><span class="k">Dessign</span> ${esc(row.dessin)}</div>
+      <div><span class="k">Order number</span> ${esc(row.orderNo)}</div>
+      <div><span class="k">Order reference</span> ${esc(row.customerRef)}</div>
+      <div></div>
+      <div><span class="k">Delivery date</span> ${esc(compactDate(row.deliveryDate))}</div>
+      <div><span class="k">GTIN</span> ${esc(gtin)}</div>
+      <div><span class="k">Lot number</span> ${esc(row.lot)}</div>
+      <div><span class="k">Origin</span> ${esc(row.origin)}</div>
+      <div><span class="k">Quality class</span> 1</div>
+    </div>
+    <hr class="rule" />
+    <div class="bc-wrap">
+      <div class="vert">Pallet ${palletNo}/${total}</div>
+      <div>${b1}${b2}<div style="display:flex;align-items:center;gap:8px"><span>SSCC</span><div style="flex:1">${b3}</div></div></div>
+      <div class="vert-r">${esc(row.customerRef)}</div>
+    </div>
+  </article>`;
+}
+
+function packingListHtml(row) {
+  const co = company();
+  const bc = typeof gpBarcodeGs1 === "function" ? gpBarcodeGs1(String(row.orderNo), 40) : "";
+  return `<article class="page">
+    <div class="pl-head">
+      <div style="font-size:12px;letter-spacing:.12em">GREEN · PEAS</div>
+      <div class="pl-title">Packing list</div>
+      <div style="font-size:22px;font-weight:700">${esc(row.orderNo)}</div>
+    </div>
+    <div class="pl-box">
+      <div class="pl-grid">
+        <div>Order number <b>${esc(row.orderNo)}</b></div>
+        <div>Pallet type <b>${esc(row.pallet)}</b></div>
+        <div>Lot number <b>${esc(row.lot)}</b></div>
+        <div>Client <b>${esc(row.customerName)}</b></div>
+        <div>Transport pallets <b>${esc(row.floorPallets)}</b></div>
+        <div>Barcode<br/><b>${esc(row.ean)}</b></div>
+        <div>Process <b>${esc(row.packing)}</b></div>
+        <div>Total pallets <b>${esc(row.totalPallets)}</b></div>
+        <div></div>
+        <div>Product <b>${esc(row.product)}</b></div>
+        <div>Box type <b>${esc(row.box)}</b></div>
+        <div></div>
+        <div>Packing date <b>${esc(row.orderDate)}</b></div>
+        <div>Boxes per pallet <b>${esc(row.boxesPerPallet)}</b></div>
+        <div></div>
+        <div>Delivery date <b>${esc(compactDate(row.deliveryDate))}</b></div>
+        <div>Units per box <b>${esc(daComma(row.unitsPerBox))}</b></div>
+        <div>Total boxes <b>${esc(row.boxes)}</b></div>
+      </div>
+    </div>
+    <div class="pl-box"><h4>Batches used for this order:</h4><div class="blank"></div></div>
+    <div class="pl-box"><h4>Sorted kilograms:</h4><div class="blank"></div></div>
+    <div class="pl-box">
+      <div>Team:</div><div class="blank" style="min-height:22px;margin:6px 0"></div>
+      <div>Packing line:</div><div class="blank" style="min-height:22px;margin:6px 0"></div>
+      <div>Start time:</div><div class="blank" style="min-height:22px;margin:6px 0"></div>
+      <div>End time:</div><div class="blank" style="min-height:22px;margin:6px 0"></div>
+      <div>Time spent for sorting:</div><div class="blank" style="min-height:22px;margin:6px 0"></div>
+    </div>
+    <div class="foot">
+      <div>${esc(co.name)}<br/>${esc(co.address)}</div>
+      <div>${bc}<div style="text-align:right;font-size:20px;font-weight:700">${esc(row.orderNo)}</div></div>
+    </div>
+  </article>`;
+}
+
+function printPalletLabels(rows) {
+  const parts = [];
+  (rows || []).forEach((raw) => {
+    const row = enrichPacking(raw);
+    const n = Math.max(1, Number(row.totalPallets) || 1);
+    parts.push(deliveryNoteHtml(row));
+    for (let i = n; i >= 1; i--) parts.push(gs1PalletHtml(row, i, n));
+    parts.push(packingListHtml(row));
+  });
+  if (!parts.length) {
+    toast("No pallet rows to print");
+    return;
+  }
+  openPrint(parts.join(""), "label");
 }
 
 function orderPrintCss() {
@@ -1787,50 +2096,6 @@ function orderPrintCss() {
     .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 13px; }
     .tot { text-align: right; margin-top: 16px; }
   `;
-}
-
-function palletLabelHtml(row, copy, copies) {
-  const co = company();
-  const headline = row.headline || `${row.boxes} x ${row.unitsPerBox} ${row.product} ${row.packing}`;
-  return `<article class="label">
-    <div class="corners">
-      <div class="box"><h4>From</h4><div class="name">${esc(co.name)}</div><div>${esc(co.address)}</div></div>
-      <div class="box"><h4>To</h4><div class="name">${esc(row.customerName)}</div><div>${esc(row.delivery)}</div></div>
-    </div>
-    <div class="dn"><small>Delivery note</small><b>${esc(row.customerRef || row.orderNo)}</b></div>
-    <div class="line">${esc(headline)}</div>
-    <div class="grid">
-      <div><span>Order date</span><b>${esc(compactDate(row.orderDate))}</b></div>
-      <div><span>Delivery date</span><b>${esc(compactDate(row.deliveryDate))}</b></div>
-      <div><span>Order number</span><b>${esc(row.orderNo)}</b></div>
-      <div><span>Order reference</span><b>${esc(row.customerRef)}</b></div>
-      <div><span>Lot number</span><b>${esc(row.lot)}</b></div>
-      <div><span>Pallet ${copy} of ${copies}</span><b>${esc(row.pallet)}</b></div>
-      <div><span>Total boxes</span><b>${esc(row.boxes)}</b></div>
-      <div><span>Units per box</span><b>${esc(row.unitsPerBox)}</b></div>
-      <div><span>Product</span><b>${esc(row.product)}</b></div>
-      <div><span>Transport pallet</span><b>${esc(row.floorPallets)}</b></div>
-      <div><span>Split pallet</span><b>${Number(row.totalPallets) > Number(row.floorPallets) ? Number(row.totalPallets) - Number(row.floorPallets) : ""}</b></div>
-      <div><span>Pallet type</span><b>${esc(row.pallet)}</b></div>
-      <div><span>Contact details</span><b>${esc(co.phone)}</b></div>
-      <div><span>Origin</span><b>${esc(row.origin)}</b></div>
-      <div><span>Net weight Kg</span><b>${esc(row.netKg)}</b></div>
-    </div>
-    ${barcodeHtml(row.orderNo)}
-  </article>`;
-}
-
-function printPalletLabels(rows) {
-  const parts = [];
-  (rows || []).forEach((row) => {
-    const copies = Math.max(1, Number(row.totalPallets) || 1);
-    for (let i = 1; i <= copies; i++) parts.push(palletLabelHtml(row, i, copies));
-  });
-  if (!parts.length) {
-    toast("No pallet rows to print");
-    return;
-  }
-  openPrint(parts.join(""), "label");
 }
 
 function printOrderPaper(sale) {
