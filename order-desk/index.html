@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>GreenPeas — Local order desk</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="lock" id="lock">
+    <form class="lock-card" id="lockForm">
+      <div class="badge-priv">Local only · stays on this PC</div>
+      <h1>GreenPeas order desk</h1>
+      <p id="lockCopy">Create a PIN known only to you. Customer, product and order data never leave this browser. The app binds to localhost and does not upload anything.</p>
+      <input id="pin1" type="password" autocomplete="new-password" placeholder="PIN (min. 4 characters)" />
+      <input id="pin2" type="password" autocomplete="new-password" placeholder="Repeat PIN" />
+      <button class="btn primary" type="submit" style="width:100%">Unlock</button>
+      <p class="hint" id="lockErr"></p>
+    </form>
+  </div>
+
+  <div class="app" id="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <strong>GreenPeas A/S</strong>
+        <span>Order handling · private</span>
+      </div>
+      <nav class="nav">
+        <button data-view="orders" class="active">Sales orders</button>
+        <button data-view="new">New e-conomic order</button>
+        <button data-view="catalog">Clients, products, boxes</button>
+        <button data-view="packing">Packing source</button>
+      </nav>
+      <div class="side-foot">
+        Bound to 127.0.0.1 only.<br />
+        Data is stored in this browser.<br />
+        Lock with the PIN when you leave.
+      </div>
+    </aside>
+    <section class="main">
+      <header class="topbar">
+        <h2 id="title">Sales orders</h2>
+        <div class="spacer"></div>
+        <button class="btn" id="btnImport">Import CSV</button>
+        <input id="fileCsv" type="file" accept=".csv,text/csv" hidden />
+        <button class="btn" id="btnLock">Lock</button>
+      </header>
+      <div class="content" id="content"></div>
+    </section>
+  </div>
+
+  <div class="modal-bg" id="modalBg"></div>
+  <div class="toast" id="toast"></div>
+  <script src="seed.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
